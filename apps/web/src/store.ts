@@ -39,6 +39,7 @@ import {
 } from "./types";
 import { resolveEnvironmentHttpUrl } from "./environments/runtime";
 import { sanitizeThreadErrorMessage } from "./rpc/transportError";
+import { getThreadFromEnvironmentState } from "./threadDerivation";
 
 export interface EnvironmentState {
   projectIds: ProjectId[];
@@ -95,19 +96,6 @@ const MAX_THREAD_CHECKPOINTS = 500;
 const MAX_THREAD_PROPOSED_PLANS = 200;
 const MAX_THREAD_ACTIVITIES = 500;
 const EMPTY_THREAD_IDS: ThreadId[] = [];
-const EMPTY_MESSAGE_IDS: MessageId[] = [];
-const EMPTY_ACTIVITY_IDS: string[] = [];
-const EMPTY_PROPOSED_PLAN_IDS: string[] = [];
-const EMPTY_TURN_IDS: TurnId[] = [];
-const EMPTY_MESSAGES: ChatMessage[] = [];
-const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
-const EMPTY_PROPOSED_PLANS: ProposedPlan[] = [];
-const EMPTY_TURN_DIFF_SUMMARIES: TurnDiffSummary[] = [];
-const EMPTY_MESSAGE_MAP: Record<MessageId, ChatMessage> = {};
-const EMPTY_ACTIVITY_MAP: Record<string, OrchestrationThreadActivity> = {};
-const EMPTY_PROPOSED_PLAN_MAP: Record<string, ProposedPlan> = {};
-const EMPTY_TURN_DIFF_MAP: Record<TurnId, TurnDiffSummary> = {};
-const EMPTY_THREAD_TURN_STATE: ThreadTurnState = Object.freeze({ latestTurn: null });
 
 function arraysEqual<T>(left: readonly T[], right: readonly T[]): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index]);
@@ -402,78 +390,6 @@ function buildTurnDiffSlice(thread: Thread): {
   };
 }
 
-function selectThreadMessages(state: EnvironmentState, threadId: ThreadId): ChatMessage[] {
-  const ids = state.messageIdsByThreadId[threadId] ?? EMPTY_MESSAGE_IDS;
-  const byId = state.messageByThreadId[threadId] ?? EMPTY_MESSAGE_MAP;
-  if (ids.length === 0) {
-    return EMPTY_MESSAGES;
-  }
-  return ids.flatMap((id) => {
-    const message = byId[id];
-    return message ? [message] : [];
-  });
-}
-
-function selectThreadActivities(
-  state: EnvironmentState,
-  threadId: ThreadId,
-): OrchestrationThreadActivity[] {
-  const ids = state.activityIdsByThreadId[threadId] ?? EMPTY_ACTIVITY_IDS;
-  const byId = state.activityByThreadId[threadId] ?? EMPTY_ACTIVITY_MAP;
-  if (ids.length === 0) {
-    return EMPTY_ACTIVITIES;
-  }
-  return ids.flatMap((id) => {
-    const activity = byId[id];
-    return activity ? [activity] : [];
-  });
-}
-
-function selectThreadProposedPlans(state: EnvironmentState, threadId: ThreadId): ProposedPlan[] {
-  const ids = state.proposedPlanIdsByThreadId[threadId] ?? EMPTY_PROPOSED_PLAN_IDS;
-  const byId = state.proposedPlanByThreadId[threadId] ?? EMPTY_PROPOSED_PLAN_MAP;
-  if (ids.length === 0) {
-    return EMPTY_PROPOSED_PLANS;
-  }
-  return ids.flatMap((id) => {
-    const plan = byId[id];
-    return plan ? [plan] : [];
-  });
-}
-
-function selectThreadTurnDiffSummaries(
-  state: EnvironmentState,
-  threadId: ThreadId,
-): TurnDiffSummary[] {
-  const ids = state.turnDiffIdsByThreadId[threadId] ?? EMPTY_TURN_IDS;
-  const byId = state.turnDiffSummaryByThreadId[threadId] ?? EMPTY_TURN_DIFF_MAP;
-  if (ids.length === 0) {
-    return EMPTY_TURN_DIFF_SUMMARIES;
-  }
-  return ids.flatMap((id) => {
-    const summary = byId[id];
-    return summary ? [summary] : [];
-  });
-}
-
-function getThread(state: EnvironmentState, threadId: ThreadId): Thread | undefined {
-  const shell = state.threadShellById[threadId];
-  if (!shell) {
-    return undefined;
-  }
-  const turnState = state.threadTurnStateById[threadId] ?? EMPTY_THREAD_TURN_STATE;
-  return {
-    ...shell,
-    session: state.threadSessionById[threadId] ?? null,
-    latestTurn: turnState.latestTurn,
-    pendingSourceProposedPlan: turnState.pendingSourceProposedPlan,
-    messages: selectThreadMessages(state, threadId),
-    activities: selectThreadActivities(state, threadId),
-    proposedPlans: selectThreadProposedPlans(state, threadId),
-    turnDiffSummaries: selectThreadTurnDiffSummaries(state, threadId),
-  };
-}
-
 function getProjects(state: EnvironmentState): Project[] {
   return state.projectIds.flatMap((projectId) => {
     const project = state.projectById[projectId];
@@ -483,7 +399,7 @@ function getProjects(state: EnvironmentState): Project[] {
 
 function getThreads(state: EnvironmentState): Thread[] {
   return state.threadIds.flatMap((threadId) => {
-    const thread = getThread(state, threadId);
+    const thread = getThreadFromEnvironmentState(state, threadId);
     return thread ? [thread] : [];
   });
 }
@@ -895,7 +811,7 @@ function updateThreadState(
   threadId: ThreadId,
   updater: (thread: Thread) => Thread,
 ): EnvironmentState {
-  const currentThread = getThread(state, threadId);
+  const currentThread = getThreadFromEnvironmentState(state, threadId);
   if (!currentThread) {
     return state;
   }
@@ -1162,7 +1078,7 @@ function applyEnvironmentOrchestrationEvent(
     }
 
     case "thread.created": {
-      const previousThread = getThread(state, event.payload.threadId);
+      const previousThread = getThreadFromEnvironmentState(state, event.payload.threadId);
       const nextThread = mapThread(
         {
           id: event.payload.threadId,
@@ -1668,8 +1584,17 @@ export function selectThreadByRef(
   ref: ScopedThreadRef | null | undefined,
 ): Thread | undefined {
   return ref
-    ? getThread(selectEnvironmentState(state, ref.environmentId), ref.threadId)
+    ? getThreadFromEnvironmentState(selectEnvironmentState(state, ref.environmentId), ref.threadId)
     : undefined;
+}
+
+export function selectThreadExistsByRef(
+  state: AppState,
+  ref: ScopedThreadRef | null | undefined,
+): boolean {
+  return ref
+    ? selectEnvironmentState(state, ref.environmentId).threadShellById[ref.threadId] !== undefined
+    : false;
 }
 
 export function selectSidebarThreadSummaryByRef(
