@@ -35,6 +35,47 @@ const loadProviders = (
     concurrency: "unbounded",
   });
 
+const hasModelCapabilities = (model: ServerProvider["models"][number]): boolean =>
+  (model.capabilities?.reasoningEffortLevels.length ?? 0) > 0 ||
+  model.capabilities?.supportsFastMode === true ||
+  model.capabilities?.supportsThinkingToggle === true ||
+  (model.capabilities?.contextWindowOptions.length ?? 0) > 0 ||
+  (model.capabilities?.promptInjectedEffortLevels.length ?? 0) > 0;
+
+const mergeProviderModels = (
+  previousModels: ReadonlyArray<ServerProvider["models"][number]>,
+  nextModels: ReadonlyArray<ServerProvider["models"][number]>,
+): ReadonlyArray<ServerProvider["models"][number]> => {
+  if (nextModels.length === 0 && previousModels.length > 0) {
+    return previousModels;
+  }
+
+  const previousBySlug = new Map(previousModels.map((model) => [model.slug, model] as const));
+  const mergedModels = nextModels.map((model) => {
+    const previousModel = previousBySlug.get(model.slug);
+    if (!previousModel || hasModelCapabilities(model) || !hasModelCapabilities(previousModel)) {
+      return model;
+    }
+    return {
+      ...model,
+      capabilities: previousModel.capabilities,
+    };
+  });
+  const nextSlugs = new Set(nextModels.map((model) => model.slug));
+  return [...mergedModels, ...previousModels.filter((model) => !nextSlugs.has(model.slug))];
+};
+
+export const mergeProviderSnapshot = (
+  previousProvider: ServerProvider | undefined,
+  nextProvider: ServerProvider,
+): ServerProvider =>
+  !previousProvider
+    ? nextProvider
+    : {
+        ...nextProvider,
+        models: mergeProviderModels(previousProvider.models, nextProvider.models),
+      };
+
 export const haveProvidersChanged = (
   previousProviders: ReadonlyArray<ServerProvider>,
   nextProviders: ReadonlyArray<ServerProvider>,
@@ -121,7 +162,10 @@ export const ProviderRegistryLive = Layer.effect(
           );
 
           for (const provider of nextProviders) {
-            mergedProviders.set(provider.provider, provider);
+            mergedProviders.set(
+              provider.provider,
+              mergeProviderSnapshot(mergedProviders.get(provider.provider), provider),
+            );
           }
 
           const providers = orderProviderSnapshots([...mergedProviders.values()]);

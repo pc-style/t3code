@@ -435,50 +435,8 @@ const discoverCursorModelsViaAcp = (cursorSettings: CursorSettings) =>
   Effect.gen(function* () {
     const acp = yield* makeCursorAcpProbeRuntime(cursorSettings);
     const started = yield* acp.start();
-    const initialConfigOptions = started.sessionSetupResult.configOptions ?? [];
-    const modelOption = findCursorModelConfigOption(initialConfigOptions);
-    const modelChoices = flattenSessionConfigSelectOptions(modelOption);
-    if (!modelOption || modelChoices.length === 0) {
-      return [];
-    }
-
-    const currentModelValue =
-      modelOption.type === "select" ? modelOption.currentValue?.trim() || undefined : undefined;
-    const cachedCapabilitiesBySlug = new Map<string, ModelCapabilities>();
-    if (currentModelValue) {
-      cachedCapabilitiesBySlug.set(
-        currentModelValue,
-        buildCursorCapabilitiesFromConfigOptions(initialConfigOptions),
-      );
-    }
-
-    for (const modelChoice of modelChoices) {
-      const modelSlug = modelChoice.value.trim();
-      if (!modelSlug || cachedCapabilitiesBySlug.has(modelSlug)) {
-        continue;
-      }
-
-      const nextConfigOptions = yield* acp.setConfigOption(modelOption.id, modelSlug).pipe(
-        Effect.map((response) => response.configOptions ?? []),
-        Effect.timeout("3 seconds"),
-        Effect.catch(() => Effect.succeed<ReadonlyArray<EffectAcpSchema.SessionConfigOption>>([])),
-      );
-      if (nextConfigOptions.length === 0) {
-        continue;
-      }
-
-      cachedCapabilitiesBySlug.set(
-        modelSlug,
-        buildCursorCapabilitiesFromConfigOptions(nextConfigOptions),
-      );
-    }
-
-    return buildCursorDiscoveredModels(
-      modelChoices.map((modelChoice) => ({
-        slug: modelChoice.value.trim(),
-        name: modelChoice.name.trim(),
-        capabilities: cachedCapabilitiesBySlug.get(modelChoice.value.trim()) ?? EMPTY_CAPABILITIES,
-      })),
+    return buildCursorDiscoveredModelsFromConfigOptions(
+      started.sessionSetupResult.configOptions ?? [],
     );
   }).pipe(Effect.scoped);
 

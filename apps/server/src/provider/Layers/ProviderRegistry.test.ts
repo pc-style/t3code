@@ -30,7 +30,11 @@ import {
   readCodexConfigModelProvider,
 } from "./CodexProvider";
 import { checkClaudeProviderStatus, parseClaudeAuthStatusFromOutput } from "./ClaudeProvider";
-import { haveProvidersChanged, ProviderRegistryLive } from "./ProviderRegistry";
+import {
+  haveProvidersChanged,
+  mergeProviderSnapshot,
+  ProviderRegistryLive,
+} from "./ProviderRegistry";
 import { ServerConfig } from "../../config";
 import { ServerSettingsService, type ServerSettingsShape } from "../../serverSettings";
 import { ProviderRegistry } from "../Services/ProviderRegistry";
@@ -561,6 +565,93 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
         ] as const satisfies ReadonlyArray<ServerProvider>;
 
         assert.strictEqual(haveProvidersChanged(providers, [...providers]), false);
+      });
+
+      it("preserves previously discovered provider models when a refresh returns none", () => {
+        const previousProvider = {
+          provider: "cursor",
+          status: "ready",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          checkedAt: "2026-04-14T00:00:00.000Z",
+          version: "2026.04.09-f2b0fcd",
+          models: [
+            {
+              slug: "claude-opus-4-6",
+              name: "Opus 4.6",
+              isCustom: false,
+              capabilities: {
+                reasoningEffortLevels: [{ value: "high", label: "High", isDefault: true }],
+                supportsFastMode: true,
+                supportsThinkingToggle: true,
+                contextWindowOptions: [],
+                promptInjectedEffortLevels: [],
+              },
+            },
+          ],
+          slashCommands: [],
+          skills: [],
+        } as const satisfies ServerProvider;
+        const refreshedProvider = {
+          ...previousProvider,
+          checkedAt: "2026-04-14T00:01:00.000Z",
+          models: [],
+        } satisfies ServerProvider;
+
+        assert.deepStrictEqual(mergeProviderSnapshot(previousProvider, refreshedProvider).models, [
+          ...previousProvider.models,
+        ]);
+      });
+
+      it("fills missing capabilities from the previous provider snapshot", () => {
+        const previousProvider = {
+          provider: "cursor",
+          status: "ready",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          checkedAt: "2026-04-14T00:00:00.000Z",
+          version: "2026.04.09-f2b0fcd",
+          models: [
+            {
+              slug: "claude-opus-4-6",
+              name: "Opus 4.6",
+              isCustom: false,
+              capabilities: {
+                reasoningEffortLevels: [{ value: "high", label: "High", isDefault: true }],
+                supportsFastMode: true,
+                supportsThinkingToggle: true,
+                contextWindowOptions: [],
+                promptInjectedEffortLevels: [],
+              },
+            },
+          ],
+          slashCommands: [],
+          skills: [],
+        } as const satisfies ServerProvider;
+        const refreshedProvider = {
+          ...previousProvider,
+          checkedAt: "2026-04-14T00:01:00.000Z",
+          models: [
+            {
+              slug: "claude-opus-4-6",
+              name: "Opus 4.6",
+              isCustom: false,
+              capabilities: {
+                reasoningEffortLevels: [],
+                supportsFastMode: false,
+                supportsThinkingToggle: false,
+                contextWindowOptions: [],
+                promptInjectedEffortLevels: [],
+              },
+            },
+          ],
+        } satisfies ServerProvider;
+
+        assert.deepStrictEqual(mergeProviderSnapshot(previousProvider, refreshedProvider).models, [
+          ...previousProvider.models,
+        ]);
       });
 
       it.effect("does not probe provider health during registry startup", () =>
