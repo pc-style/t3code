@@ -73,6 +73,19 @@ async function readJsonLines(filePath: string) {
     .map((line) => JSON.parse(line) as Record<string, unknown>);
 }
 
+async function waitForFileContent(filePath: string, attempts = 40) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      const raw = await readFile(filePath, "utf8");
+      if (raw.trim().length > 0) {
+        return raw;
+      }
+    } catch {}
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(`Timed out waiting for file content at ${filePath}`);
+}
+
 const cursorAdapterTestLayer = it.layer(
   makeCursorAdapterLive().pipe(
     Layer.provideMerge(ServerSettingsService.layerTest()),
@@ -165,6 +178,38 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       }
 
       yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("closes the ACP child process when a session stops", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const settings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("cursor-stop-session-close");
+      const tempDir = yield* Effect.promise(() =>
+        mkdtemp(path.join(os.tmpdir(), "cursor-adapter-exit-log-")),
+      );
+      const exitLogPath = path.join(tempDir, "exit.log");
+
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockAgentWrapper({
+          T3_ACP_EXIT_LOG_PATH: exitLogPath,
+        }),
+      );
+      yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+
+      yield* adapter.startSession({
+        threadId,
+        provider: "cursor",
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { provider: "cursor", model: "default" },
+      });
+
+      yield* adapter.stopSession(threadId);
+
+      const exitLog = yield* Effect.promise(() => waitForFileContent(exitLogPath));
+      assert.include(exitLog, "SIGTERM");
     }),
   );
 

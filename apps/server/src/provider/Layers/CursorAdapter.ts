@@ -22,11 +22,13 @@ import {
   DateTime,
   Deferred,
   Effect,
+  Exit,
   Fiber,
   FileSystem,
   Layer,
   PubSub,
   Random,
+  Scope,
   Stream,
 } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
@@ -93,6 +95,7 @@ interface PendingUserInput {
 interface CursorSessionContext {
   readonly threadId: ThreadId;
   session: ProviderSession;
+  readonly scope: Scope.Closeable;
   readonly acp: AcpSessionRuntimeShape;
   notificationFiber: Fiber.Fiber<void, never> | undefined;
   readonly pendingApprovals: Map<ApprovalRequestId, PendingApproval>;
@@ -330,7 +333,7 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
         if (ctx.notificationFiber) {
           yield* Fiber.interrupt(ctx.notificationFiber);
         }
-        yield* Effect.ignore(ctx.acp.close);
+        yield* Effect.ignore(Scope.close(ctx.scope, Exit.void));
         sessions.delete(ctx.threadId);
         yield* offerRuntimeEvent({
           type: "session.exited",
@@ -381,6 +384,11 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
 
         const pendingApprovals = new Map<ApprovalRequestId, PendingApproval>();
         const pendingUserInputs = new Map<ApprovalRequestId, PendingUserInput>();
+        const sessionScope = yield* Scope.make("sequential");
+        let sessionScopeTransferred = false;
+        yield* Effect.addFinalizer(() =>
+          sessionScopeTransferred ? Effect.void : Scope.close(sessionScope, Exit.void),
+        );
         let ctx!: CursorSessionContext;
 
         const resumeSessionId = parseCursorResume(input.resumeCursor)?.sessionId;
@@ -398,6 +406,7 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
           clientInfo: { name: "t3-code", version: "0.0.0" },
           ...acpNativeLoggers,
         }).pipe(
+          Effect.provideService(Scope.Scope, sessionScope),
           Effect.mapError(
             (cause) =>
               new ProviderAdapterProcessError({
@@ -582,6 +591,7 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
         ctx = {
           threadId: input.threadId,
           session,
+          scope: sessionScope,
           acp,
           notificationFiber: undefined,
           pendingApprovals,
@@ -666,6 +676,7 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
 
         ctx.notificationFiber = nf;
         sessions.set(input.threadId, ctx);
+        sessionScopeTransferred = true;
 
         yield* offerRuntimeEvent({
           type: "session.started",
@@ -690,7 +701,7 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
         });
 
         return session;
-      });
+      }).pipe(Effect.scoped);
 
     const sendTurn: CursorAdapterShape["sendTurn"] = (input) =>
       Effect.gen(function* () {

@@ -345,12 +345,7 @@ const makeCursorAcpProbeRuntime = (cursorSettings: CursorSettings) =>
 const withCursorAcpProbeRuntime = <A, E, R>(
   cursorSettings: CursorSettings,
   useRuntime: (acp: AcpSessionRuntime["Service"]) => Effect.Effect<A, E, R>,
-) =>
-  Effect.gen(function* () {
-    const acp = yield* makeCursorAcpProbeRuntime(cursorSettings);
-    yield* Effect.addFinalizer(() => acp.close);
-    return yield* useRuntime(acp);
-  }).pipe(Effect.scoped);
+) => makeCursorAcpProbeRuntime(cursorSettings).pipe(Effect.flatMap(useRuntime), Effect.scoped);
 
 function normalizeCursorConfigOptionToken(value: string | null | undefined): string {
   return (

@@ -33,8 +33,6 @@ describe("AcpSessionRuntime", () => {
           _meta: { parameterizedModelPicker: true },
         },
       });
-
-      yield* runtime.close;
     }).pipe(
       Effect.provide(
         AcpSessionRuntime.layer({
@@ -95,8 +93,6 @@ describe("AcpSessionRuntime", () => {
       ) {
         expect(assistantDelta.itemId).toBe(assistantStart.itemId);
       }
-
-      yield* runtime.close;
     }).pipe(
       Effect.provide(
         AcpSessionRuntime.layer({
@@ -155,8 +151,6 @@ describe("AcpSessionRuntime", () => {
         expect(secondStarted.itemId).not.toBe(firstStarted.itemId);
         expect(secondDelta.itemId).toBe(secondStarted.itemId);
       }
-
-      yield* runtime.close;
     }).pipe(
       Effect.provide(
         AcpSessionRuntime.layer({
@@ -195,8 +189,6 @@ describe("AcpSessionRuntime", () => {
         expect(toolCall.toolCall.status).toBe("completed");
         expect(toolCall.toolCall.title).toBe("Read file");
       }
-
-      yield* runtime.close;
     }).pipe(
       Effect.provide(
         AcpSessionRuntime.layer({
@@ -248,8 +240,6 @@ describe("AcpSessionRuntime", () => {
           (event) => event.method === "session/prompt" && event.status === "succeeded",
         ),
       ).toBe(true);
-
-      yield* runtime.close;
     }).pipe(
       Effect.provide(
         AcpSessionRuntime.layer({
@@ -293,8 +283,6 @@ describe("AcpSessionRuntime", () => {
       expect(
         protocolEvents.some((event) => event.direction === "incoming" && event.stage === "decoded"),
       ).toBe(true);
-
-      yield* runtime.close;
     }).pipe(
       Effect.provide(
         AcpSessionRuntime.layer({
@@ -336,8 +324,6 @@ describe("AcpSessionRuntime", () => {
         );
         expect(error.message).toContain("composer-2[fast=true]");
       }
-
-      yield* runtime.close;
 
       const recordedRequests = readFileSync(requestLogPath, "utf8")
         .trim()

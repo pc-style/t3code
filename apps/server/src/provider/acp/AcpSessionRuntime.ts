@@ -100,7 +100,6 @@ export interface AcpSessionRuntimeShape {
     method: string,
     payload: unknown,
   ) => Effect.Effect<void, EffectAcpErrors.AcpError>;
-  readonly close: Effect.Effect<void>;
 }
 
 interface AcpStartedState extends AcpSessionRuntimeStartResult {}
@@ -142,11 +141,11 @@ const makeAcpSessionRuntime = (
 ): Effect.Effect<
   AcpSessionRuntimeShape,
   EffectAcpErrors.AcpError,
-  ChildProcessSpawner.ChildProcessSpawner
+  ChildProcessSpawner.ChildProcessSpawner | Scope.Scope
 > =>
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const runtimeScope = yield* Scope.make("sequential");
+    const runtimeScope = yield* Scope.Scope;
     const eventQueue = yield* Queue.unbounded<AcpParsedSessionEvent>();
     const modeStateRef = yield* Ref.make<AcpSessionModeState | undefined>(undefined);
     const toolCallsRef = yield* Ref.make(new Map<string, AcpToolCallState>());
@@ -227,7 +226,6 @@ const makeAcpSessionRuntime = (
         params: notification,
       }),
     );
-    const close = Scope.close(runtimeScope, Exit.void).pipe(Effect.asVoid);
 
     const initializeClientCapabilities = {
       fs: {
@@ -513,7 +511,6 @@ const makeAcpSessionRuntime = (
       request: (method, payload) =>
         runLoggedRequest(method, payload, acp.raw.request(method, payload)),
       notify: acp.raw.notify,
-      close,
     } satisfies AcpSessionRuntimeShape;
   });
 

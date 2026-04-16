@@ -16,7 +16,6 @@ describe.runIf(process.env.T3_CURSOR_ACP_PROBE === "1")("Cursor ACP CLI probe", 
       const runtime = yield* AcpSessionRuntime;
       const started = yield* runtime.start();
       expect(started.initializeResult).toBeDefined();
-      yield* runtime.close;
     }).pipe(
       Effect.provide(
         AcpSessionRuntime.layer({
@@ -68,7 +67,6 @@ describe.runIf(process.env.T3_CURSOR_ACP_PROBE === "1")("Cursor ACP CLI probe", 
         expect(modelConfig).toBeDefined();
         expect(typeof modelConfig?.id).toBe("string");
       }
-      yield* runtime.close;
     }).pipe(
       Effect.provide(
         AcpSessionRuntime.layer({
@@ -125,7 +123,6 @@ describe.runIf(process.env.T3_CURSOR_ACP_PROBE === "1")("Cursor ACP CLI probe", 
         }
         expect(parameterizedOptions.length).toBeGreaterThan(0);
       }
-      yield* runtime.close;
     }).pipe(
       Effect.provide(
         AcpSessionRuntime.layer({
