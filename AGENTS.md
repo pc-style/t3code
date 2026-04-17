@@ -11,6 +11,9 @@ T3 Code is a minimal web GUI for using coding agents like Codex and Claude.
 
 This repository is a VERY EARLY WIP. Proposing sweeping changes that improve long-term maintainability is encouraged.
 
+UI/design guidance lives in [`DESIGN.md`](./DESIGN.md). Read it before making interface, layout, or visual changes.
+Backend runtime, auth, transport, and pairing docs live under [`docs/backend/`](./docs/backend/).
+
 ## Core Priorities
 
 1. Performance first.
