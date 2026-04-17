@@ -1,5 +1,12 @@
 import type { ComponentType } from "react";
-import { ArchiveIcon, ArrowLeftIcon, KeyboardIcon, Link2Icon, Settings2Icon } from "lucide-react";
+import {
+  ArchiveIcon,
+  ArrowLeftIcon,
+  GaugeIcon,
+  KeyboardIcon,
+  Link2Icon,
+  Settings2Icon,
+} from "lucide-react";
 import { useNavigate } from "@tanstack/react-router";
 
 import {
@@ -14,6 +21,7 @@ import {
 
 export type SettingsSectionPath =
   | "/settings/general"
+  | "/settings/usage"
   | "/settings/keybindings"
   | "/settings/connections"
   | "/settings/archived";
@@ -24,6 +32,7 @@ export const SETTINGS_NAV_ITEMS: ReadonlyArray<{
   icon: ComponentType<{ className?: string }>;
 }> = [
   { label: "General", to: "/settings/general", icon: Settings2Icon },
+  { label: "Usage", to: "/settings/usage", icon: GaugeIcon },
   { label: "Keybindings", to: "/settings/keybindings", icon: KeyboardIcon },
   { label: "Connections", to: "/settings/connections", icon: Link2Icon },
   { label: "Archive", to: "/settings/archived", icon: ArchiveIcon },

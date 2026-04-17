@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   doesVersionMatchDesktopUpdateChannel,
+  isDevDesktopVersion,
   isNightlyDesktopVersion,
   resolveDefaultDesktopUpdateChannel,
 } from "./updateChannels.ts";
@@ -16,6 +17,16 @@ describe("isNightlyDesktopVersion", () => {
   });
 });
 
+describe("isDevDesktopVersion", () => {
+  it("detects packaged dev versions", () => {
+    expect(isDevDesktopVersion("0.0.17-dev.1")).toBe(true);
+  });
+
+  it("does not flag stable versions as dev", () => {
+    expect(isDevDesktopVersion("0.0.17")).toBe(false);
+  });
+});
+
 describe("resolveDefaultDesktopUpdateChannel", () => {
   it("defaults stable builds to latest", () => {
     expect(resolveDefaultDesktopUpdateChannel("0.0.17")).toBe("latest");
@@ -23,6 +34,10 @@ describe("resolveDefaultDesktopUpdateChannel", () => {
 
   it("defaults nightly builds to nightly", () => {
     expect(resolveDefaultDesktopUpdateChannel("0.0.17-nightly.20260415.1")).toBe("nightly");
+  });
+
+  it("keeps packaged dev builds on latest", () => {
+    expect(resolveDefaultDesktopUpdateChannel("0.0.17-dev.1")).toBe("latest");
   });
 });
 

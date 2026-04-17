@@ -58,7 +58,7 @@ import { showDesktopConfirmDialog } from "./confirmDialog.ts";
 import { resolveDesktopServerExposure } from "./serverExposure.ts";
 import { syncShellEnvironment } from "./syncShellEnvironment.ts";
 import { getAutoUpdateDisabledReason, shouldBroadcastDownloadProgress } from "./updateState.ts";
-import { doesVersionMatchDesktopUpdateChannel } from "./updateChannels.ts";
+import { doesVersionMatchDesktopUpdateChannel, isDevDesktopVersion } from "./updateChannels.ts";
 import { ServerListeningDetector } from "./serverListeningDetector.ts";
 import {
   createInitialDesktopUpdateState,
@@ -108,16 +108,17 @@ const SAVED_ENVIRONMENT_REGISTRY_PATH = Path.join(STATE_DIR, "saved-environments
 const DESKTOP_SCHEME = "t3";
 const ROOT_DIR = Path.resolve(__dirname, "../../..");
 const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL);
+const isDevBuild = isDevelopment || isDevDesktopVersion(app.getVersion());
 const desktopAppBranding: DesktopAppBranding = resolveDesktopAppBranding({
-  isDevelopment,
+  isDevelopment: isDevBuild,
   appVersion: app.getVersion(),
 });
 const APP_DISPLAY_NAME = desktopAppBranding.displayName;
-const APP_USER_MODEL_ID = isDevelopment ? "com.t3tools.t3code.dev" : "com.t3tools.t3code";
-const LINUX_DESKTOP_ENTRY_NAME = isDevelopment ? "t3code-dev.desktop" : "t3code.desktop";
-const LINUX_WM_CLASS = isDevelopment ? "t3code-dev" : "t3code";
-const USER_DATA_DIR_NAME = isDevelopment ? "t3code-dev" : "t3code";
-const LEGACY_USER_DATA_DIR_NAME = isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)";
+const APP_USER_MODEL_ID = isDevBuild ? "com.t3tools.t3code.dev" : "com.t3tools.t3code";
+const LINUX_DESKTOP_ENTRY_NAME = isDevBuild ? "t3code-dev.desktop" : "t3code.desktop";
+const LINUX_WM_CLASS = isDevBuild ? "t3code-dev" : "t3code";
+const USER_DATA_DIR_NAME = isDevBuild ? "t3code-dev" : "t3code";
+const LEGACY_USER_DATA_DIR_NAME = isDevBuild ? "T3 Code (Dev)" : "T3 Code (Alpha)";
 const COMMIT_HASH_PATTERN = /^[0-9a-f]{7,40}$/i;
 const COMMIT_HASH_DISPLAY_LENGTH = 12;
 const LOG_DIR = Path.join(STATE_DIR, "logs");
@@ -1179,7 +1180,7 @@ function shouldEnableAutoUpdates(): boolean {
     readAppUpdateYml() !== null || Boolean(process.env.T3CODE_DESKTOP_MOCK_UPDATES);
   return (
     getAutoUpdateDisabledReason({
-      isDevelopment,
+      isDevelopment: isDevBuild,
       isPackaged: app.isPackaged,
       platform: process.platform,
       appImage: process.env.APPIMAGE,

@@ -27,6 +27,10 @@ import {
   type ProjectionTurn,
   ProjectionTurnRepository,
 } from "../../persistence/Services/ProjectionTurns.ts";
+import {
+  ProjectionThreadTurnUsageRepository,
+  type ProjectionThreadTurnUsage,
+} from "../../persistence/Services/ProjectionThreadTurnUsages.ts";
 import { ProjectionThreadRepository } from "../../persistence/Services/ProjectionThreads.ts";
 import { ProjectionPendingApprovalRepositoryLive } from "../../persistence/Layers/ProjectionPendingApprovals.ts";
 import { ProjectionProjectRepositoryLive } from "../../persistence/Layers/ProjectionProjects.ts";
@@ -36,6 +40,7 @@ import { ProjectionThreadMessageRepositoryLive } from "../../persistence/Layers/
 import { ProjectionThreadProposedPlanRepositoryLive } from "../../persistence/Layers/ProjectionThreadProposedPlans.ts";
 import { ProjectionThreadSessionRepositoryLive } from "../../persistence/Layers/ProjectionThreadSessions.ts";
 import { ProjectionTurnRepositoryLive } from "../../persistence/Layers/ProjectionTurns.ts";
+import { ProjectionThreadTurnUsageRepositoryLive } from "../../persistence/Layers/ProjectionThreadTurnUsages.ts";
 import { ProjectionThreadRepositoryLive } from "../../persistence/Layers/ProjectionThreads.ts";
 import { ServerConfig } from "../../config.ts";
 import {
@@ -55,6 +60,7 @@ export const ORCHESTRATION_PROJECTOR_NAMES = {
   threadMessages: "projection.thread-messages",
   threadProposedPlans: "projection.thread-proposed-plans",
   threadActivities: "projection.thread-activities",
+  threadTurnUsages: "projection.thread-turn-usages",
   threadSessions: "projection.thread-sessions",
   threadTurns: "projection.thread-turns",
   checkpoints: "projection.checkpoints",
@@ -296,6 +302,24 @@ function retainProjectionProposedPlansAfterRevert(
   );
 }
 
+function retainProjectionTurnUsagesAfterRevert(
+  turnUsages: ReadonlyArray<ProjectionThreadTurnUsage>,
+  turns: ReadonlyArray<ProjectionTurn>,
+  turnCount: number,
+): ReadonlyArray<ProjectionThreadTurnUsage> {
+  const retainedTurnIds = new Set<string>(
+    turns
+      .filter(
+        (turn) =>
+          turn.turnId !== null &&
+          turn.checkpointTurnCount !== null &&
+          turn.checkpointTurnCount <= turnCount,
+      )
+      .flatMap((turn) => (turn.turnId === null ? [] : [turn.turnId])),
+  );
+  return turnUsages.filter((turnUsage) => retainedTurnIds.has(turnUsage.turnId));
+}
+
 function collectThreadAttachmentRelativePaths(
   threadId: string,
   messages: ReadonlyArray<ProjectionThreadMessage>,
@@ -448,6 +472,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
     const projectionThreadMessageRepository = yield* ProjectionThreadMessageRepository;
     const projectionThreadProposedPlanRepository = yield* ProjectionThreadProposedPlanRepository;
     const projectionThreadActivityRepository = yield* ProjectionThreadActivityRepository;
+    const projectionThreadTurnUsageRepository = yield* ProjectionThreadTurnUsageRepository;
     const projectionThreadSessionRepository = yield* ProjectionThreadSessionRepository;
     const projectionTurnRepository = yield* ProjectionTurnRepository;
     const projectionPendingApprovalRepository = yield* ProjectionPendingApprovalRepository;
@@ -684,6 +709,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         case "thread.message-sent":
         case "thread.proposed-plan-upserted":
         case "thread.activity-appended":
+        case "thread.turn-usage-summary-upserted":
         case "thread.approval-response-requested":
         case "thread.user-input-response-requested": {
           const existingRow = yield* projectionThreadRepository.getById({
@@ -925,6 +951,58 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             threadId: event.payload.threadId,
           });
           yield* Effect.forEach(keptRows, projectionThreadActivityRepository.upsert, {
+            concurrency: 1,
+          }).pipe(Effect.asVoid);
+          return;
+        }
+
+        default:
+          return;
+      }
+    });
+
+    const applyThreadTurnUsagesProjection: ProjectorDefinition["apply"] = Effect.fn(
+      "applyThreadTurnUsagesProjection",
+    )(function* (event, _attachmentSideEffects) {
+      switch (event.type) {
+        case "thread.turn-usage-summary-upserted":
+          yield* projectionThreadTurnUsageRepository.upsert({
+            threadId: event.payload.threadId,
+            turnId: event.payload.summary.turnId,
+            model: event.payload.summary.model,
+            pricingMode: event.payload.summary.pricingMode,
+            inputTokens: event.payload.summary.inputTokens,
+            cachedInputTokens: event.payload.summary.cachedInputTokens,
+            outputTokens: event.payload.summary.outputTokens,
+            reasoningOutputTokens: event.payload.summary.reasoningOutputTokens,
+            creditsUsed: event.payload.summary.creditsUsed,
+            usdCost: event.payload.summary.usdCost,
+            completedAt: event.payload.summary.completedAt,
+          });
+          return;
+
+        case "thread.reverted": {
+          const existingRows = yield* projectionThreadTurnUsageRepository.listByThreadId({
+            threadId: event.payload.threadId,
+          });
+          if (existingRows.length === 0) {
+            return;
+          }
+          const existingTurns = yield* projectionTurnRepository.listByThreadId({
+            threadId: event.payload.threadId,
+          });
+          const keptRows = retainProjectionTurnUsagesAfterRevert(
+            existingRows,
+            existingTurns,
+            event.payload.turnCount,
+          );
+          if (keptRows.length === existingRows.length) {
+            return;
+          }
+          yield* projectionThreadTurnUsageRepository.deleteByThreadId({
+            threadId: event.payload.threadId,
+          });
+          yield* Effect.forEach(keptRows, projectionThreadTurnUsageRepository.upsert, {
             concurrency: 1,
           }).pipe(Effect.asVoid);
           return;
@@ -1352,6 +1430,10 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         apply: applyThreadActivitiesProjection,
       },
       {
+        name: ORCHESTRATION_PROJECTOR_NAMES.threadTurnUsages,
+        apply: applyThreadTurnUsagesProjection,
+      },
+      {
         name: ORCHESTRATION_PROJECTOR_NAMES.threadSessions,
         apply: applyThreadSessionsProjection,
       },
@@ -1470,6 +1552,7 @@ export const OrchestrationProjectionPipelineLive = Layer.effect(
   Layer.provideMerge(ProjectionThreadMessageRepositoryLive),
   Layer.provideMerge(ProjectionThreadProposedPlanRepositoryLive),
   Layer.provideMerge(ProjectionThreadActivityRepositoryLive),
+  Layer.provideMerge(ProjectionThreadTurnUsageRepositoryLive),
   Layer.provideMerge(ProjectionThreadSessionRepositoryLive),
   Layer.provideMerge(ProjectionTurnRepositoryLive),
   Layer.provideMerge(ProjectionPendingApprovalRepositoryLive),

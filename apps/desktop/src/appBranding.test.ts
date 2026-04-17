@@ -29,6 +29,15 @@ describe("resolveDesktopAppStageLabel", () => {
       }),
     ).toBe("Alpha");
   });
+
+  it("uses Dev for packaged dev builds", () => {
+    expect(
+      resolveDesktopAppStageLabel({
+        isDevelopment: false,
+        appVersion: "0.0.17-dev.1",
+      }),
+    ).toBe("Dev");
+  });
 });
 
 describe("resolveDesktopAppBranding", () => {

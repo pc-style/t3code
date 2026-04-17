@@ -25,6 +25,7 @@ import {
   ThreadRevertedPayload,
   ThreadSessionSetPayload,
   ThreadTurnDiffCompletedPayload,
+  ThreadTurnUsageSummaryUpsertedPayload,
 } from "./Schemas.ts";
 
 type ThreadPatch = Partial<Omit<OrchestrationThread, "id" | "projectId">>;
@@ -136,6 +137,13 @@ function retainThreadProposedPlansAfterRevert(
   return proposedPlans.filter(
     (proposedPlan) => proposedPlan.turnId === null || retainedTurnIds.has(proposedPlan.turnId),
   );
+}
+
+function retainThreadTurnUsageSummariesAfterRevert(
+  turnUsageSummaries: ReadonlyArray<OrchestrationThread["turnUsageSummaries"][number]>,
+  retainedTurnIds: ReadonlySet<string>,
+): ReadonlyArray<OrchestrationThread["turnUsageSummaries"][number]> {
+  return turnUsageSummaries.filter((summary) => retainedTurnIds.has(summary.turnId));
 }
 
 function compareThreadActivities(
@@ -267,6 +275,7 @@ export function projectEvent(
             messages: [],
             activities: [],
             checkpoints: [],
+            turnUsageSummaries: [],
             session: null,
           },
           event.type,
@@ -590,6 +599,10 @@ export function projectEvent(
             retainedTurnIds,
           ).slice(-200);
           const activities = retainThreadActivitiesAfterRevert(thread.activities, retainedTurnIds);
+          const turnUsageSummaries = retainThreadTurnUsageSummariesAfterRevert(
+            thread.turnUsageSummaries,
+            retainedTurnIds,
+          );
 
           const latestCheckpoint = checkpoints.at(-1) ?? null;
           const latestTurn =
@@ -611,6 +624,7 @@ export function projectEvent(
               messages,
               proposedPlans,
               activities,
+              turnUsageSummaries,
               latestTurn,
               updatedAt: event.occurredAt,
             }),
@@ -642,6 +656,38 @@ export function projectEvent(
             ...nextBase,
             threads: updateThread(nextBase.threads, payload.threadId, {
               activities,
+              updatedAt: event.occurredAt,
+            }),
+          };
+        }),
+      );
+
+    case "thread.turn-usage-summary-upserted":
+      return decodeForEvent(
+        ThreadTurnUsageSummaryUpsertedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (!thread) {
+            return nextBase;
+          }
+
+          const turnUsageSummaries = [
+            ...thread.turnUsageSummaries.filter((entry) => entry.turnId !== payload.summary.turnId),
+            payload.summary,
+          ].toSorted(
+            (left, right) =>
+              left.completedAt.localeCompare(right.completedAt) ||
+              left.turnId.localeCompare(right.turnId),
+          );
+
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              turnUsageSummaries,
               updatedAt: event.occurredAt,
             }),
           };

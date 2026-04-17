@@ -1,4 +1,9 @@
-import { type EnvironmentId, type MessageId, type TurnId } from "@t3tools/contracts";
+import {
+  type CodexTurnUsageSummary,
+  type EnvironmentId,
+  type MessageId,
+  type TurnId,
+} from "@t3tools/contracts";
 import {
   createContext,
   memo,
@@ -81,6 +86,9 @@ interface TimelineRowSharedState {
   resolvedTheme: "light" | "dark";
   workspaceRoot: string | undefined;
   activeThreadEnvironmentId: EnvironmentId;
+  showCodexPerMessageCredits: boolean;
+  showCodexCreditCosts: boolean;
+  codexTurnUsageByTurnId: Map<TurnId, CodexTurnUsageSummary>;
   onRevertUserMessage: (messageId: MessageId) => void;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
@@ -113,6 +121,9 @@ interface MessagesTimelineProps {
   resolvedTheme: "light" | "dark";
   timestampFormat: TimestampFormat;
   workspaceRoot: string | undefined;
+  showCodexPerMessageCredits?: boolean;
+  showCodexCreditCosts?: boolean;
+  codexTurnUsageByTurnId?: Map<TurnId, CodexTurnUsageSummary>;
   onIsAtEndChange: (isAtEnd: boolean) => void;
 }
 
@@ -141,6 +152,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   resolvedTheme,
   timestampFormat,
   workspaceRoot,
+  showCodexPerMessageCredits = false,
+  showCodexCreditCosts = false,
+  codexTurnUsageByTurnId = new Map<TurnId, CodexTurnUsageSummary>(),
   onIsAtEndChange,
 }: MessagesTimelineProps) {
   const rawRows = useMemo(
@@ -204,6 +218,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       resolvedTheme,
       workspaceRoot,
       activeThreadEnvironmentId,
+      showCodexPerMessageCredits,
+      showCodexCreditCosts,
+      codexTurnUsageByTurnId,
       onRevertUserMessage,
       onImageExpand,
       onOpenTurnDiff,
@@ -220,6 +237,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       resolvedTheme,
       workspaceRoot,
       activeThreadEnvironmentId,
+      showCodexPerMessageCredits,
+      showCodexCreditCosts,
+      codexTurnUsageByTurnId,
       onRevertUserMessage,
       onImageExpand,
       onOpenTurnDiff,
@@ -390,6 +410,22 @@ function TimelineRowContent({ row }: { row: TimelineRow }) {
             showCopyButton: row.showAssistantCopyButton,
             streaming: row.message.streaming || assistantTurnStillInProgress,
           });
+          const codexTurnUsageSummary =
+            ctx.showCodexPerMessageCredits && ctx.showCodexCreditCosts && row.message.turnId
+              ? ctx.codexTurnUsageByTurnId.get(row.message.turnId)
+              : undefined;
+          const codexCreditsDetail = codexTurnUsageSummary
+            ? [
+                `Input ${codexTurnUsageSummary.inputTokens.toLocaleString()}`,
+                `Cached ${codexTurnUsageSummary.cachedInputTokens.toLocaleString()}`,
+                `Output ${(
+                  codexTurnUsageSummary.outputTokens + codexTurnUsageSummary.reasoningOutputTokens
+                ).toLocaleString()}`,
+                ...(codexTurnUsageSummary.usdCost !== null
+                  ? [`$${codexTurnUsageSummary.usdCost.toFixed(4)}`]
+                  : []),
+              ].join(" • ")
+            : null;
           return (
             <>
               {row.showCompletionDivider && (
@@ -429,6 +465,18 @@ function TimelineRowContent({ row }: { row: TimelineRow }) {
                       )
                     )}
                   </p>
+                  {codexTurnUsageSummary ? (
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <p className="text-[10px] text-muted-foreground/45">
+                            {codexTurnUsageSummary.creditsUsed.toFixed(2)} credits
+                          </p>
+                        }
+                      />
+                      <TooltipPopup side="bottom">{codexCreditsDetail}</TooltipPopup>
+                    </Tooltip>
+                  ) : null}
                   {assistantCopyState.visible ? (
                     <div className="flex items-center opacity-0 transition-opacity duration-200  group-hover/assistant:opacity-100">
                       <MessageCopyButton

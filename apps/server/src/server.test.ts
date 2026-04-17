@@ -79,6 +79,7 @@ import {
   ProviderRegistry,
   type ProviderRegistryShape,
 } from "./provider/Services/ProviderRegistry.ts";
+import { CodexUsage, type CodexUsageShape } from "./provider/Services/CodexUsage.ts";
 import { ServerLifecycleEvents, type ServerLifecycleEventsShape } from "./serverLifecycleEvents.ts";
 import { ServerRuntimeStartup, type ServerRuntimeStartupShape } from "./serverRuntimeStartup.ts";
 import { ServerSettingsService, type ServerSettingsShape } from "./serverSettings.ts";
@@ -125,6 +126,55 @@ const testEnvironmentDescriptor = {
     repositoryIdentity: true,
   },
 };
+
+const makeMockCodexUsage = (overrides?: Partial<CodexUsageShape>): CodexUsageShape => ({
+  getSnapshot: () =>
+    Effect.succeed({
+      provider: "codex",
+      fetchedAt: new Date(0).toISOString(),
+      source: "unavailable",
+      accountType: "unknown",
+      planType: null,
+      planSubtype: null,
+      pricingMode: "unknown",
+      primaryWindow: null,
+      weeklyWindow: null,
+      credits: null,
+      entitlement: {
+        showRateLimits: false,
+        showCreditsBalance: false,
+        showCreditCosts: false,
+        isBusinessUsageBased: false,
+        reason: null,
+      },
+      message: null,
+    }),
+  refresh: () =>
+    Effect.succeed({
+      provider: "codex",
+      fetchedAt: new Date(0).toISOString(),
+      source: "unavailable",
+      accountType: "unknown",
+      planType: null,
+      planSubtype: null,
+      pricingMode: "unknown",
+      primaryWindow: null,
+      weeklyWindow: null,
+      credits: null,
+      entitlement: {
+        showRateLimits: false,
+        showCreditsBalance: false,
+        showCreditCosts: false,
+        isBusinessUsageBased: false,
+        reason: null,
+      },
+      message: null,
+    }),
+  ingestRuntimeEvent: () => Effect.void,
+  streamChanges: Stream.empty,
+  ...overrides,
+});
+
 const makeDefaultOrchestrationReadModel = () => {
   const now = new Date().toISOString();
   return {
@@ -160,6 +210,7 @@ const makeDefaultOrchestrationReadModel = () => {
         session: null,
         activities: [],
         proposedPlans: [],
+        turnUsageSummaries: [],
         checkpoints: [],
         deletedAt: null,
       },
@@ -424,6 +475,7 @@ const buildAppUnderTest = (options?: {
           ...options?.layers?.providerRegistry,
         }),
       ),
+      Layer.provide(Layer.succeed(CodexUsage, makeMockCodexUsage())),
       Layer.provide(
         Layer.mock(ServerSettingsService)({
           start: Effect.void,
@@ -1899,7 +1951,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.deepEqual(second, {
         version: 1,
         type: "keybindingsUpdated",
-        payload: { issues: [] },
+        payload: { keybindings: [], issues: [] },
       });
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
@@ -2897,6 +2949,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             session: null,
             activities: [],
             proposedPlans: [],
+            turnUsageSummaries: [],
             checkpoints: [],
             deletedAt: null,
           },

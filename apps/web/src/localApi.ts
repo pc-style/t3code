@@ -2,6 +2,7 @@ import type { ContextMenuItem, LocalApi } from "@t3tools/contracts";
 
 import { resetGitStatusStateForTests } from "./lib/gitStatusState";
 import { resetRequestLatencyStateForTests } from "./rpc/requestLatencyState";
+import { resetCodexUsageStateForTests } from "./rpc/codexUsageState";
 import { resetServerStateForTests } from "./rpc/serverState";
 import { resetWsConnectionStateForTests } from "./rpc/wsConnectionState";
 import {
@@ -112,6 +113,7 @@ export function createLocalApi(rpcClient: WsRpcClient): LocalApi {
     server: {
       getConfig: rpcClient.server.getConfig,
       refreshProviders: rpcClient.server.refreshProviders,
+      getCodexUsage: (input) => rpcClient.server.getCodexUsage(input ?? {}),
       upsertKeybinding: rpcClient.server.upsertKeybinding,
       getSettings: rpcClient.server.getSettings,
       updateSettings: rpcClient.server.updateSettings,
@@ -146,6 +148,7 @@ export async function __resetLocalApiForTests() {
   __resetClientSettingsPersistenceForTests();
   await resetEnvironmentServiceForTests();
   resetGitStatusStateForTests();
+  resetCodexUsageStateForTests();
   resetRequestLatencyStateForTests();
   resetSavedEnvironmentRegistryStoreForTests();
   resetSavedEnvironmentRuntimeStoreForTests();

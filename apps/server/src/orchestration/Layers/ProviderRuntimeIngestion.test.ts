@@ -29,6 +29,7 @@ import {
   ProviderService,
   type ProviderServiceShape,
 } from "../../provider/Services/ProviderService.ts";
+import { CodexUsage } from "../../provider/Services/CodexUsage.ts";
 import { RepositoryIdentityResolverLive } from "../../project/Layers/RepositoryIdentityResolver.ts";
 import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
@@ -212,6 +213,16 @@ describe("ProviderRuntimeIngestion", () => {
       Layer.provideMerge(orchestrationLayer),
       Layer.provideMerge(SqlitePersistenceMemory),
       Layer.provideMerge(Layer.succeed(ProviderService, provider.service)),
+      Layer.provideMerge(
+        Layer.succeed(CodexUsage, {
+          getSnapshot: () =>
+            Effect.die(new Error("CodexUsage.getSnapshot should not be called in this test")),
+          refresh: () =>
+            Effect.die(new Error("CodexUsage.refresh should not be called in this test")),
+          ingestRuntimeEvent: () => Effect.void,
+          streamChanges: Stream.empty,
+        }),
+      ),
       Layer.provideMerge(makeTestServerSettingsLayer(options?.serverSettings)),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
       Layer.provideMerge(NodeServices.layer),

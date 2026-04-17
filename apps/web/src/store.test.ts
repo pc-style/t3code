@@ -75,6 +75,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     turnDiffSummaries: [],
     activities: [],
     proposedPlans: [],
+    turnUsageSummaries: [],
     error: null,
     createdAt: "2026-02-13T00:00:00.000Z",
     archivedAt: null,
@@ -171,6 +172,14 @@ function makeState(thread: Thread): AppState {
         thread.turnDiffSummaries.map((summary) => [summary.turnId, summary] as const),
       ) as EnvironmentState["turnDiffSummaryByThreadId"][ThreadId],
     },
+    turnUsageIdsByThreadId: {
+      [thread.id]: (thread.turnUsageSummaries ?? []).map((summary) => summary.turnId),
+    },
+    turnUsageSummaryByThreadId: {
+      [thread.id]: Object.fromEntries(
+        (thread.turnUsageSummaries ?? []).map((summary) => [summary.turnId, summary] as const),
+      ) as EnvironmentState["turnUsageSummaryByThreadId"][ThreadId],
+    },
     sidebarThreadSummaryById: {},
     bootstrapComplete: true,
   };
@@ -196,6 +205,8 @@ function makeEmptyState(overrides: Partial<AppState & EnvironmentState> = {}): A
     proposedPlanByThreadId: {},
     turnDiffIdsByThreadId: {},
     turnDiffSummaryByThreadId: {},
+    turnUsageIdsByThreadId: {},
+    turnUsageSummaryByThreadId: {},
     sidebarThreadSummaryById: {},
     bootstrapComplete: true,
   };

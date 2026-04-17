@@ -35,6 +35,9 @@ function createSendTurnHarness() {
     account: {
       type: "unknown",
       planType: null,
+      planSubtype: null,
+      billingType: null,
+      seatType: null,
       sparkEnabled: true,
     },
     collabReceiverTurns: new Map(),
@@ -155,6 +158,9 @@ function createCollabNotificationHarness() {
     account: {
       type: "unknown",
       planType: null,
+      planSubtype: null,
+      billingType: null,
+      seatType: null,
       sparkEnabled: true,
     },
     pending: new Map(),
@@ -292,6 +298,9 @@ describe("readCodexAccountSnapshot", () => {
     ).toEqual({
       type: "chatgpt",
       planType: "plus",
+      planSubtype: null,
+      billingType: null,
+      seatType: null,
       sparkEnabled: false,
     });
   });
@@ -306,6 +315,9 @@ describe("readCodexAccountSnapshot", () => {
     ).toEqual({
       type: "chatgpt",
       planType: "pro",
+      planSubtype: null,
+      billingType: null,
+      seatType: null,
       sparkEnabled: true,
     });
   });
@@ -318,6 +330,9 @@ describe("readCodexAccountSnapshot", () => {
     ).toEqual({
       type: "apiKey",
       planType: null,
+      planSubtype: null,
+      billingType: null,
+      seatType: null,
       sparkEnabled: false,
     });
   });
@@ -342,6 +357,9 @@ describe("resolveCodexModelForAccount", () => {
       resolveCodexModelForAccount("gpt-5.3-codex-spark", {
         type: "chatgpt",
         planType: "plus",
+        planSubtype: null,
+        billingType: null,
+        seatType: null,
         sparkEnabled: false,
       }),
     ).toBe("gpt-5.3-codex");
@@ -352,6 +370,9 @@ describe("resolveCodexModelForAccount", () => {
       resolveCodexModelForAccount("gpt-5.3-codex-spark", {
         type: "chatgpt",
         planType: "pro",
+        planSubtype: null,
+        billingType: null,
+        seatType: null,
         sparkEnabled: true,
       }),
     ).toBe("gpt-5.3-codex-spark");
@@ -362,6 +383,9 @@ describe("resolveCodexModelForAccount", () => {
       resolveCodexModelForAccount("gpt-5.3-codex-spark", {
         type: "apiKey",
         planType: null,
+        planSubtype: null,
+        billingType: null,
+        seatType: null,
         sparkEnabled: false,
       }),
     ).toBe("gpt-5.3-codex");

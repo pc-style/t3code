@@ -1,4 +1,5 @@
 import type {
+  CodexTurnUsageSummary,
   EnvironmentId,
   MessageId,
   OrchestrationCheckpointSummary,
@@ -76,6 +77,8 @@ export interface EnvironmentState {
   proposedPlanByThreadId: Record<ThreadId, Record<string, ProposedPlan>>;
   turnDiffIdsByThreadId: Record<ThreadId, TurnId[]>;
   turnDiffSummaryByThreadId: Record<ThreadId, Record<TurnId, TurnDiffSummary>>;
+  turnUsageIdsByThreadId: Record<ThreadId, TurnId[]>;
+  turnUsageSummaryByThreadId: Record<ThreadId, Record<TurnId, CodexTurnUsageSummary>>;
 
   // ---------------------------------------------------------------------------
   // Sidebar summary — written ONLY by the shell stream
@@ -110,6 +113,8 @@ const initialEnvironmentState: EnvironmentState = {
   proposedPlanByThreadId: {},
   turnDiffIdsByThreadId: {},
   turnDiffSummaryByThreadId: {},
+  turnUsageIdsByThreadId: {},
+  turnUsageSummaryByThreadId: {},
   sidebarThreadSummaryById: {},
   bootstrapComplete: false,
 };
@@ -247,6 +252,7 @@ function mapThread(thread: OrchestrationThread, environmentId: EnvironmentId): T
     worktreePath: thread.worktreePath,
     turnDiffSummaries: thread.checkpoints.map(mapTurnDiffSummary),
     activities: thread.activities.map((activity) => ({ ...activity })),
+    turnUsageSummaries: thread.turnUsageSummaries.map((summary) => ({ ...summary })),
   };
 }
 
@@ -485,6 +491,19 @@ function buildTurnDiffSlice(thread: Thread): {
   };
 }
 
+function buildTurnUsageSlice(thread: Thread): {
+  ids: TurnId[];
+  byId: Record<TurnId, CodexTurnUsageSummary>;
+} {
+  const turnUsageSummaries = thread.turnUsageSummaries ?? [];
+  return {
+    ids: turnUsageSummaries.map((summary) => summary.turnId),
+    byId: Object.fromEntries(
+      turnUsageSummaries.map((summary) => [summary.turnId, summary] as const),
+    ) as Record<TurnId, CodexTurnUsageSummary>,
+  };
+}
+
 function getProjects(state: EnvironmentState): Project[] {
   return state.projectIds.flatMap((projectId) => {
     const project = state.projectById[projectId];
@@ -671,6 +690,21 @@ function writeThreadState(
     };
   }
 
+  if (previousThread?.turnUsageSummaries !== nextThread.turnUsageSummaries) {
+    const nextTurnUsageSlice = buildTurnUsageSlice(nextThread);
+    nextState = {
+      ...nextState,
+      turnUsageIdsByThreadId: {
+        ...nextState.turnUsageIdsByThreadId,
+        [nextThread.id]: nextTurnUsageSlice.ids,
+      },
+      turnUsageSummaryByThreadId: {
+        ...nextState.turnUsageSummaryByThreadId,
+        [nextThread.id]: nextTurnUsageSlice.byId,
+      },
+    };
+  }
+
   return nextState;
 }
 
@@ -799,6 +833,10 @@ function removeThreadState(state: EnvironmentState, threadId: ThreadId): Environ
   const { [threadId]: _removedTurnDiffIds, ...turnDiffIdsByThreadId } = state.turnDiffIdsByThreadId;
   const { [threadId]: _removedTurnDiffs, ...turnDiffSummaryByThreadId } =
     state.turnDiffSummaryByThreadId;
+  const { [threadId]: _removedTurnUsageIds, ...turnUsageIdsByThreadId } =
+    state.turnUsageIdsByThreadId;
+  const { [threadId]: _removedTurnUsages, ...turnUsageSummaryByThreadId } =
+    state.turnUsageSummaryByThreadId;
   const { [threadId]: _removedSidebarSummary, ...sidebarThreadSummaryById } =
     state.sidebarThreadSummaryById;
 
@@ -817,6 +855,8 @@ function removeThreadState(state: EnvironmentState, threadId: ThreadId): Environ
     proposedPlanByThreadId,
     turnDiffIdsByThreadId,
     turnDiffSummaryByThreadId,
+    turnUsageIdsByThreadId,
+    turnUsageSummaryByThreadId,
     sidebarThreadSummaryById,
   };
 }
@@ -1099,6 +1139,11 @@ function syncEnvironmentShellSnapshot(
       state.turnDiffSummaryByThreadId,
       nextThreadIds,
     ),
+    turnUsageIdsByThreadId: retainThreadScopedRecord(state.turnUsageIdsByThreadId, nextThreadIds),
+    turnUsageSummaryByThreadId: retainThreadScopedRecord(
+      state.turnUsageSummaryByThreadId,
+      nextThreadIds,
+    ),
     bootstrapComplete: true,
   };
 
@@ -1261,6 +1306,7 @@ function applyEnvironmentOrchestrationEvent(
           messages: [],
           proposedPlans: [],
           activities: [],
+          turnUsageSummaries: [],
           checkpoints: [],
           session: null,
         },
@@ -1555,6 +1601,25 @@ function applyEnvironmentOrchestrationEvent(
         };
       });
 
+    case "thread.turn-usage-summary-upserted":
+      return updateThreadState(state, event.payload.threadId, (thread) => {
+        const turnUsageSummaries = [
+          ...(thread.turnUsageSummaries ?? []).filter(
+            (entry) => entry.turnId !== event.payload.summary.turnId,
+          ),
+          { ...event.payload.summary },
+        ].toSorted(
+          (left, right) =>
+            left.completedAt.localeCompare(right.completedAt) ||
+            left.turnId.localeCompare(right.turnId),
+        );
+        return {
+          ...thread,
+          turnUsageSummaries,
+          updatedAt: event.occurredAt,
+        };
+      });
+
     case "thread.reverted":
       return updateThreadState(state, event.payload.threadId, (thread) => {
         const turnDiffSummaries = thread.turnDiffSummaries
@@ -1580,6 +1645,9 @@ function applyEnvironmentOrchestrationEvent(
           retainedTurnIds,
         ).slice(-MAX_THREAD_PROPOSED_PLANS);
         const activities = retainThreadActivitiesAfterRevert(thread.activities, retainedTurnIds);
+        const turnUsageSummaries = (thread.turnUsageSummaries ?? []).filter((entry) =>
+          retainedTurnIds.has(entry.turnId),
+        );
         const latestCheckpoint = turnDiffSummaries.at(-1) ?? null;
 
         return {
@@ -1588,6 +1656,7 @@ function applyEnvironmentOrchestrationEvent(
           messages,
           proposedPlans,
           activities,
+          turnUsageSummaries,
           pendingSourceProposedPlan: undefined,
           latestTurn:
             latestCheckpoint === null

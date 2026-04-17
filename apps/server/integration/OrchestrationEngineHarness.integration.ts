@@ -44,6 +44,7 @@ import { makeProviderServiceLive } from "../src/provider/Layers/ProviderService.
 import { makeCodexAdapterLive } from "../src/provider/Layers/CodexAdapter.ts";
 import { CodexAdapter } from "../src/provider/Services/CodexAdapter.ts";
 import { ProviderService } from "../src/provider/Services/ProviderService.ts";
+import { CodexUsage } from "../src/provider/Services/CodexUsage.ts";
 import { AnalyticsService } from "../src/telemetry/Services/AnalyticsService.ts";
 import { CheckpointReactorLive } from "../src/orchestration/Layers/CheckpointReactor.ts";
 import { RepositoryIdentityResolverLive } from "../src/project/Layers/RepositoryIdentityResolver.ts";
@@ -355,6 +356,16 @@ export const makeOrchestrationIntegrationHarness = (
     const layer = Layer.empty.pipe(
       Layer.provideMerge(runtimeServicesLayer),
       Layer.provideMerge(orchestrationReactorLayer),
+      Layer.provideMerge(
+        Layer.succeed(CodexUsage, {
+          getSnapshot: () =>
+            Effect.die(new Error("CodexUsage.getSnapshot should not be called in this harness")),
+          refresh: () =>
+            Effect.die(new Error("CodexUsage.refresh should not be called in this harness")),
+          ingestRuntimeEvent: () => Effect.void,
+          streamChanges: Stream.empty,
+        }),
+      ),
       Layer.provide(persistenceLayer),
       Layer.provideMerge(RepositoryIdentityResolverLive),
       Layer.provideMerge(ServerSettingsService.layerTest()),

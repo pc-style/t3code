@@ -240,6 +240,7 @@ const makeThread = (input?: {
   worktreePath: null,
   turnDiffSummaries: [],
   activities: [],
+  turnUsageSummaries: [],
 });
 
 function setStoreThreads(threads: ReadonlyArray<ReturnType<typeof makeThread>>) {
@@ -335,6 +336,20 @@ function setStoreThreads(threads: ReadonlyArray<ReturnType<typeof makeThread>>) 
       threads.map((thread) => [
         thread.id,
         Object.fromEntries(thread.turnDiffSummaries.map((summary) => [summary.turnId, summary])),
+      ]),
+    ),
+    turnUsageIdsByThreadId: Object.fromEntries(
+      threads.map((thread) => [
+        thread.id,
+        (thread.turnUsageSummaries ?? []).map((summary) => summary.turnId),
+      ]),
+    ),
+    turnUsageSummaryByThreadId: Object.fromEntries(
+      threads.map((thread) => [
+        thread.id,
+        Object.fromEntries(
+          (thread.turnUsageSummaries ?? []).map((summary) => [summary.turnId, summary]),
+        ),
       ]),
     ),
     sidebarThreadSummaryById: {},

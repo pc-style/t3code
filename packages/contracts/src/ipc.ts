@@ -26,11 +26,11 @@ import type {
   ProjectWriteFileResult,
 } from "./project.ts";
 import type {
-  CodexUsageSnapshot,
   ServerConfig,
   ServerProviderUpdatedPayload,
   ServerUpsertKeybindingResult,
 } from "./server.ts";
+import type { CodexUsageSnapshot } from "./codexUsage.ts";
 import type {
   TerminalClearInput,
   TerminalCloseInput,

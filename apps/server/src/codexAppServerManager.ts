@@ -505,6 +505,9 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         account: {
           type: "unknown",
           planType: null,
+          planSubtype: null,
+          billingType: null,
+          seatType: null,
           sparkEnabled: true,
         },
         child,
@@ -518,27 +521,28 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       };
 
       this.sessions.set(threadId, context);
-      this.attachProcessListeners(context);
+      const activeContext = context;
+      this.attachProcessListeners(activeContext);
 
-      this.emitLifecycleEvent(context, "session/connecting", "Starting codex app-server");
+      this.emitLifecycleEvent(activeContext, "session/connecting", "Starting codex app-server");
 
-      await this.sendRequest(context, "initialize", buildCodexInitializeParams());
+      await this.sendRequest(activeContext, "initialize", buildCodexInitializeParams());
 
-      this.writeMessage(context, { method: "initialized" });
+      this.writeMessage(activeContext, { method: "initialized" });
       try {
-        const modelListResponse = await this.sendRequest(context, "model/list", {});
+        const modelListResponse = await this.sendRequest(activeContext, "model/list", {});
         console.log("codex model/list response", modelListResponse);
       } catch (error) {
         console.log("codex model/list failed", error);
       }
       try {
-        const accountReadResponse = await this.sendRequest(context, "account/read", {});
+        const accountReadResponse = await this.sendRequest(activeContext, "account/read", {});
         console.log("codex account/read response", accountReadResponse);
-        context.account = readCodexAccountSnapshot(accountReadResponse);
+        activeContext.account = readCodexAccountSnapshot(accountReadResponse);
         console.log("codex subscription status", {
-          type: context.account.type,
-          planType: context.account.planType,
-          sparkEnabled: context.account.sparkEnabled,
+          type: activeContext.account.type,
+          planType: activeContext.account.planType,
+          sparkEnabled: activeContext.account.sparkEnabled,
         });
       } catch (error) {
         console.log("codex account/read failed", error);
@@ -546,7 +550,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
 
       const normalizedModel = resolveCodexModelForAccount(
         normalizeCodexModelSlug(input.model),
-        context.account,
+        activeContext.account,
       );
       const sessionOverrides = {
         model: normalizedModel ?? null,
@@ -561,7 +565,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       };
       const resumeThreadId = readResumeThreadId(input);
       this.emitLifecycleEvent(
-        context,
+        activeContext,
         "session/threadOpenRequested",
         resumeThreadId
           ? `Attempting to resume thread ${resumeThreadId}.`
@@ -587,7 +591,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         } catch (error) {
           if (!isRecoverableThreadResumeError(error)) {
             this.emitErrorEvent(
-              context,
+              activeContext,
               "session/threadResumeFailed",
               error instanceof Error ? error.message : "Codex thread resume failed.",
             );
@@ -603,7 +607,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
 
           threadOpenMethod = "thread/start";
           this.emitLifecycleEvent(
-            context,
+            activeContext,
             "session/threadResumeFallback",
             `Could not resume thread ${resumeThreadId}; started a new thread instead.`,
           );
@@ -614,11 +618,19 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
             recoverable: true,
             cause: error instanceof Error ? error.message : String(error),
           }).pipe(this.runPromise);
-          threadOpenResponse = await this.sendRequest(context, "thread/start", threadStartParams);
+          threadOpenResponse = await this.sendRequest(
+            activeContext,
+            "thread/start",
+            threadStartParams,
+          );
         }
       } else {
         threadOpenMethod = "thread/start";
-        threadOpenResponse = await this.sendRequest(context, "thread/start", threadStartParams);
+        threadOpenResponse = await this.sendRequest(
+          activeContext,
+          "thread/start",
+          threadStartParams,
+        );
       }
 
       const threadOpenRecord = this.readObject(threadOpenResponse);
@@ -630,12 +642,12 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       }
       const providerThreadId = threadIdRaw;
 
-      this.updateSession(context, {
+      this.updateSession(activeContext, {
         status: "ready",
         resumeCursor: { threadId: providerThreadId },
       });
       this.emitLifecycleEvent(
-        context,
+        activeContext,
         "session/threadOpenResolved",
         `Codex ${threadOpenMethod} resolved.`,
       );
@@ -646,8 +658,12 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         resolvedThreadId: providerThreadId,
         requestedRuntimeMode: input.runtimeMode,
       }).pipe(this.runPromise);
-      this.emitLifecycleEvent(context, "session/ready", `Connected to thread ${providerThreadId}`);
-      return { ...context.session };
+      this.emitLifecycleEvent(
+        activeContext,
+        "session/ready",
+        `Connected to thread ${providerThreadId}`,
+      );
+      return { ...activeContext.session };
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to start Codex session.";
       if (context) {

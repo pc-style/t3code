@@ -1,4 +1,5 @@
 import type {
+  CodexTurnUsageSummary,
   EnvironmentId,
   ModelSelection,
   OrchestrationLatestTurn,
@@ -114,6 +115,7 @@ export interface Thread {
   worktreePath: string | null;
   turnDiffSummaries: TurnDiffSummary[];
   activities: OrchestrationThreadActivity[];
+  turnUsageSummaries?: CodexTurnUsageSummary[];
 }
 
 export interface ThreadShell {

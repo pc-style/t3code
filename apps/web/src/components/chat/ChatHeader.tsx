@@ -35,6 +35,10 @@ interface ChatHeaderProps {
   diffToggleShortcutLabel: string | null;
   gitCwd: string | null;
   diffOpen: boolean;
+  sessionCreditSummary?: {
+    readonly label: string;
+    readonly detail: string;
+  } | null;
   onRunProjectScript: (script: ProjectScript) => void;
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<void>;
   onUpdateProjectScript: (scriptId: string, input: NewProjectScriptInput) => Promise<void>;
@@ -61,6 +65,7 @@ export const ChatHeader = memo(function ChatHeader({
   diffToggleShortcutLabel,
   gitCwd,
   diffOpen,
+  sessionCreditSummary = null,
   onRunProjectScript,
   onAddProjectScript,
   onUpdateProjectScript,
@@ -88,6 +93,18 @@ export const ChatHeader = memo(function ChatHeader({
             No Git
           </Badge>
         )}
+        {sessionCreditSummary ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Badge variant="outline" className="shrink-0 text-[10px] text-muted-foreground">
+                  {sessionCreditSummary.label}
+                </Badge>
+              }
+            />
+            <TooltipPopup side="bottom">{sessionCreditSummary.detail}</TooltipPopup>
+          </Tooltip>
+        ) : null}
       </div>
       <div className="flex shrink-0 items-center justify-end gap-2 @3xl/header-actions:gap-3">
         {activeProjectScripts && (

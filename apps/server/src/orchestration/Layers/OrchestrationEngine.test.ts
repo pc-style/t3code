@@ -134,6 +134,7 @@ describe("OrchestrationEngine", () => {
           messages: [],
           proposedPlans: [],
           activities: [],
+          turnUsageSummaries: [],
           checkpoints: [],
           session: null,
         },

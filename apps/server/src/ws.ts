@@ -43,6 +43,7 @@ import {
   observeRpcStreamEffect,
 } from "./observability/RpcInstrumentation.ts";
 import { ProviderRegistry } from "./provider/Services/ProviderRegistry.ts";
+import { CodexUsage } from "./provider/Services/CodexUsage.ts";
 import { ServerLifecycleEvents } from "./serverLifecycleEvents.ts";
 import { ServerRuntimeStartup } from "./serverRuntimeStartup.ts";
 import { ServerSettingsService } from "./serverSettings.ts";
@@ -71,6 +72,7 @@ function isThreadDetailEvent(event: OrchestrationEvent): event is Extract<
       | "thread.message-sent"
       | "thread.proposed-plan-upserted"
       | "thread.activity-appended"
+      | "thread.turn-usage-summary-upserted"
       | "thread.turn-diff-completed"
       | "thread.reverted"
       | "thread.session-set";
@@ -80,6 +82,7 @@ function isThreadDetailEvent(event: OrchestrationEvent): event is Extract<
     event.type === "thread.message-sent" ||
     event.type === "thread.proposed-plan-upserted" ||
     event.type === "thread.activity-appended" ||
+    event.type === "thread.turn-usage-summary-upserted" ||
     event.type === "thread.turn-diff-completed" ||
     event.type === "thread.reverted" ||
     event.type === "thread.session-set"
@@ -141,6 +144,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
       const gitStatusBroadcaster = yield* GitStatusBroadcaster;
       const terminalManager = yield* TerminalManager;
       const providerRegistry = yield* ProviderRegistry;
+      const codexUsage = yield* CodexUsage;
       const config = yield* ServerConfig;
       const lifecycleEvents = yield* ServerLifecycleEvents;
       const serverSettings = yield* ServerSettingsService;
@@ -752,9 +756,16 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
         [WS_METHODS.serverRefreshProviders]: (_input) =>
           observeRpcEffect(
             WS_METHODS.serverRefreshProviders,
-            providerRegistry.refresh().pipe(Effect.map((providers) => ({ providers }))),
+            providerRegistry.refresh().pipe(
+              Effect.tap(() => codexUsage.refresh().pipe(Effect.ignoreCause({ log: true }))),
+              Effect.map((providers) => ({ providers })),
+            ),
             { "rpc.aggregate": "server" },
           ),
+        [WS_METHODS.serverGetCodexUsage]: (input) =>
+          observeRpcEffect(WS_METHODS.serverGetCodexUsage, codexUsage.getSnapshot(input), {
+            "rpc.aggregate": "server",
+          }),
         [WS_METHODS.serverUpsertKeybinding]: (rule) =>
           observeRpcEffect(
             WS_METHODS.serverUpsertKeybinding,
@@ -963,6 +974,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                   version: 1 as const,
                   type: "keybindingsUpdated" as const,
                   payload: {
+                    keybindings: event.keybindings,
                     issues: event.issues,
                   },
                 })),
@@ -1019,6 +1031,15 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                 Stream.filter((event) => event.sequence > snapshot.sequence),
               );
               return Stream.concat(Stream.fromIterable(snapshotEvents), liveEvents);
+            }),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.subscribeCodexUsage]: (_input) =>
+          observeRpcStreamEffect(
+            WS_METHODS.subscribeCodexUsage,
+            Effect.gen(function* () {
+              const initialSnapshot = yield* codexUsage.getSnapshot();
+              return Stream.concat(Stream.make(initialSnapshot), codexUsage.streamChanges);
             }),
             { "rpc.aggregate": "server" },
           ),

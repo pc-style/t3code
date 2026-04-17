@@ -272,6 +272,19 @@ describe("serverState", () => {
       version: 1,
       type: "keybindingsUpdated",
       payload: {
+        keybindings: [
+          {
+            command: "terminal.toggle",
+            shortcut: {
+              key: "k",
+              metaKey: false,
+              ctrlKey: true,
+              shiftKey: false,
+              altKey: false,
+              modKey: false,
+            },
+          },
+        ],
         issues: [{ kind: "keybindings.malformed-config", message: "bad json" }],
       },
     });
@@ -296,6 +309,19 @@ describe("serverState", () => {
     await waitFor(() => {
       expect(getServerConfig()).toEqual({
         ...baseServerConfig,
+        keybindings: [
+          {
+            command: "terminal.toggle",
+            shortcut: {
+              key: "k",
+              metaKey: false,
+              ctrlKey: true,
+              shiftKey: false,
+              altKey: false,
+              modKey: false,
+            },
+          },
+        ],
         issues: [{ kind: "keybindings.malformed-config", message: "bad json" }],
         providers: nextProviders,
         settings: {

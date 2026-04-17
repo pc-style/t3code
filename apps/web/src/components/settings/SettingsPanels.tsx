@@ -77,6 +77,7 @@ import {
   useServerObservability,
   useServerProviders,
 } from "../../rpc/serverState";
+import { useCodexUsageSnapshot } from "../../rpc/codexUsageState";
 
 const THEME_OPTIONS = [
   {
@@ -438,6 +439,10 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.diffWordWrap !== DEFAULT_UNIFIED_SETTINGS.diffWordWrap
         ? ["Diff line wrapping"]
         : []),
+      ...(settings.showCodexPerMessageCredits !==
+      DEFAULT_UNIFIED_SETTINGS.showCodexPerMessageCredits
+        ? ["Per-message credit usage"]
+        : []),
       ...(settings.enableAssistantStreaming !== DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming
         ? ["Assistant output"]
         : []),
@@ -464,6 +469,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.addProjectBaseDirectory,
       settings.defaultThreadEnvMode,
       settings.diffWordWrap,
+      settings.showCodexPerMessageCredits,
       settings.enableAssistantStreaming,
       settings.timestampFormat,
       theme,
@@ -1508,6 +1514,130 @@ export function GeneralSettingsPanel() {
             >
               {isOpeningLogsDirectory ? "Opening..." : "Open logs folder"}
             </Button>
+          }
+        />
+      </SettingsSection>
+    </SettingsPageContainer>
+  );
+}
+
+export function UsageSettingsPanel() {
+  const settings = useSettings();
+  const { updateSettings } = useUpdateSettings();
+  const codexUsage = useCodexUsageSnapshot();
+  const authTypeLabel =
+    codexUsage?.accountType === "chatgpt"
+      ? "ChatGPT"
+      : codexUsage?.accountType === "apiKey"
+        ? "API key"
+        : "Unknown";
+
+  const renderWindowStatus = (
+    title: string,
+    window: NonNullable<typeof codexUsage>["primaryWindow"] | null | undefined,
+  ) => (
+    <SettingsRow
+      title={title}
+      description={
+        window
+          ? [
+              window.windowSeconds === 18_000 ? "5h window" : null,
+              window.resetAt ? `Resets ${formatRelativeTimeLabel(window.resetAt)}` : null,
+            ]
+              .filter(Boolean)
+              .join(" • ") || "Codex runtime window"
+          : "No window data is currently available."
+      }
+      status={
+        window ? (
+          <>
+            <span className="block text-foreground">
+              Remaining {window.remainingPercent !== null ? `${window.remainingPercent}%` : "n/a"}
+            </span>
+            <span className="block text-muted-foreground">
+              Used {window.usedPercent !== null ? `${window.usedPercent}%` : "n/a"}
+            </span>
+          </>
+        ) : undefined
+      }
+    />
+  );
+
+  return (
+    <SettingsPageContainer>
+      <SettingsSection title="Codex account">
+        <SettingsRow
+          title="Authentication"
+          description="Codex usage is fetched from the dedicated Codex usage endpoint."
+          status={authTypeLabel}
+        />
+        <SettingsRow
+          title="Plan"
+          description={
+            codexUsage?.planSubtype
+              ? `Subtype: ${codexUsage.planSubtype}`
+              : "No additional workspace subtype information reported."
+          }
+          status={codexUsage?.planType ?? "Unknown"}
+        />
+        {codexUsage?.message ? (
+          <SettingsRow title="Status" description={codexUsage.message} />
+        ) : null}
+      </SettingsSection>
+
+      <SettingsSection title="Rate limits">
+        {renderWindowStatus("Current window", codexUsage?.primaryWindow)}
+        {renderWindowStatus("Weekly window", codexUsage?.weeklyWindow)}
+      </SettingsSection>
+
+      {codexUsage?.entitlement.showCreditsBalance ? (
+        <SettingsSection title="Credits">
+          <SettingsRow
+            title="Workspace balance"
+            description="Shown only for business usage-based Codex workspaces."
+            status={
+              codexUsage.credits?.unlimited
+                ? "Unlimited"
+                : codexUsage.credits?.balance !== null && codexUsage.credits?.balance !== undefined
+                  ? `${codexUsage.credits.balance.toFixed(2)} credits`
+                  : codexUsage.credits?.available
+                    ? "Available"
+                    : "Unavailable"
+            }
+          />
+        </SettingsSection>
+      ) : null}
+
+      <SettingsSection title="Display">
+        <SettingsRow
+          title="Per-message credits"
+          description={
+            codexUsage?.entitlement.showCreditCosts
+              ? "Show credits used below completed assistant Codex messages."
+              : "This is available only for business usage-based Codex workspaces."
+          }
+          resetAction={
+            settings.showCodexPerMessageCredits !==
+            DEFAULT_UNIFIED_SETTINGS.showCodexPerMessageCredits ? (
+              <SettingResetButton
+                label="per-message credits"
+                onClick={() =>
+                  updateSettings({
+                    showCodexPerMessageCredits: DEFAULT_UNIFIED_SETTINGS.showCodexPerMessageCredits,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.showCodexPerMessageCredits}
+              disabled={!codexUsage?.entitlement.showCreditCosts}
+              onCheckedChange={(checked) =>
+                updateSettings({ showCodexPerMessageCredits: Boolean(checked) })
+              }
+              aria-label="Show credits used on assistant messages"
+            />
           }
         />
       </SettingsSection>

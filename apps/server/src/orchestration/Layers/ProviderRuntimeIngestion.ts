@@ -1,6 +1,7 @@
 import {
   ApprovalRequestId,
   type AssistantDeliveryMode,
+  type CodexTurnUsageSummary,
   CommandId,
   MessageId,
   type OrchestrationEvent,
@@ -22,6 +23,8 @@ import { ProjectionTurnRepositoryLive } from "../../persistence/Layers/Projectio
 import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
 import { isGitRepository } from "../../git/Utils.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
+import { calculateCodexCredits } from "../../provider/codexCreditPricing.ts";
+import { CodexUsage } from "../../provider/Services/CodexUsage.ts";
 import {
   ProviderRuntimeIngestionService,
   type ProviderRuntimeIngestionShape,
@@ -119,6 +122,206 @@ function normalizeRuntimeTurnState(
     default:
       return "completed";
   }
+}
+
+function asObject(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function asString(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function asNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function readUsageTokenCount(value: Record<string, unknown>, key: string): number {
+  const camel = asNumber(value[key]);
+  if (camel !== null) {
+    return Math.max(0, Math.trunc(camel));
+  }
+
+  const snake = key.replace(/[A-Z]/g, (char) => `_${char.toLowerCase()}`);
+  const snakeValue = asNumber(value[snake]);
+  if (snakeValue !== null) {
+    return Math.max(0, Math.trunc(snakeValue));
+  }
+
+  return 0;
+}
+
+function inferCodexPricingMode(input: {
+  readonly usage: Record<string, unknown>;
+  readonly modelUsage: Record<string, unknown> | null;
+  readonly fallbackModel: string | null;
+}): "token-based" | "legacy" | "unknown" {
+  const raw =
+    asString(input.usage.pricingMode) ??
+    asString(input.usage.pricing_mode) ??
+    asString(input.modelUsage?.pricingMode) ??
+    asString(input.modelUsage?.pricing_mode);
+
+  if (raw === "legacy") {
+    return "legacy";
+  }
+  if (raw === "token-based" || raw === "token_based") {
+    return "token-based";
+  }
+
+  return input.fallbackModel ? "token-based" : "unknown";
+}
+
+function inferCodexModel(input: {
+  readonly usage: Record<string, unknown>;
+  readonly modelUsage: Record<string, unknown> | null;
+  readonly threadModel: string | null;
+}): string | null {
+  const directModel =
+    asString(input.usage.model) ??
+    asString(input.usage.modelSlug) ??
+    asString(input.usage.model_slug) ??
+    asString(input.modelUsage?.model) ??
+    asString(input.modelUsage?.modelSlug) ??
+    asString(input.modelUsage?.model_slug);
+  if (directModel) {
+    return directModel;
+  }
+
+  if (input.modelUsage) {
+    const modelKey = Object.keys(input.modelUsage).find((key) => key.trim().length > 0);
+    if (modelKey) {
+      return modelKey;
+    }
+  }
+
+  return input.threadModel;
+}
+
+function buildCodexTurnUsageSummary(input: {
+  readonly event: Extract<ProviderRuntimeEvent, { type: "turn.completed" }>;
+  readonly threadModel: string | null;
+  readonly fastMode: boolean;
+}): CodexTurnUsageSummary | null {
+  const turnId = toTurnId(input.event.turnId);
+  if (!turnId) {
+    return null;
+  }
+
+  const usage = asObject(input.event.payload.usage);
+  if (!usage) {
+    return null;
+  }
+
+  const modelUsage = asObject(input.event.payload.modelUsage);
+  const model = inferCodexModel({
+    usage,
+    modelUsage,
+    threadModel: input.threadModel,
+  });
+  if (!model) {
+    return null;
+  }
+
+  const pricingMode = inferCodexPricingMode({
+    usage,
+    modelUsage,
+    fallbackModel: model,
+  });
+  if (pricingMode !== "token-based") {
+    return null;
+  }
+
+  const inputTokens = readUsageTokenCount(usage, "inputTokens");
+  const cachedInputTokens = readUsageTokenCount(usage, "cachedInputTokens");
+  const outputTokens = readUsageTokenCount(usage, "outputTokens");
+  const reasoningOutputTokens = readUsageTokenCount(usage, "reasoningOutputTokens");
+  const creditsUsed = calculateCodexCredits({
+    model,
+    pricingMode,
+    inputTokens,
+    cachedInputTokens,
+    outputTokens,
+    reasoningOutputTokens,
+    fastMode: input.fastMode,
+  });
+
+  if (creditsUsed === null) {
+    return null;
+  }
+
+  return {
+    turnId,
+    model,
+    pricingMode,
+    inputTokens,
+    cachedInputTokens,
+    outputTokens,
+    reasoningOutputTokens,
+    creditsUsed,
+    usdCost: input.event.payload.totalCostUsd ?? null,
+    completedAt: input.event.createdAt,
+  };
+}
+
+function buildCodexTurnUsageSummaryFromTokenUsageEvent(input: {
+  readonly event: Extract<ProviderRuntimeEvent, { type: "thread.token-usage.updated" }>;
+  readonly threadModel: string | null;
+  readonly fastMode: boolean;
+}): CodexTurnUsageSummary | null {
+  const turnId = toTurnId(input.event.turnId);
+  if (!turnId) {
+    return null;
+  }
+
+  const model = input.threadModel;
+  if (!model) {
+    return null;
+  }
+
+  const usage = input.event.payload.usage;
+  const inputTokens = usage.lastInputTokens ?? usage.inputTokens ?? 0;
+  const cachedInputTokens = usage.lastCachedInputTokens ?? usage.cachedInputTokens ?? 0;
+  const outputTokens = usage.lastOutputTokens ?? usage.outputTokens ?? 0;
+  const reasoningOutputTokens = usage.lastReasoningOutputTokens ?? usage.reasoningOutputTokens ?? 0;
+
+  if (
+    inputTokens <= 0 &&
+    cachedInputTokens <= 0 &&
+    outputTokens <= 0 &&
+    reasoningOutputTokens <= 0
+  ) {
+    return null;
+  }
+
+  const creditsUsed = calculateCodexCredits({
+    model,
+    pricingMode: "token-based",
+    inputTokens,
+    cachedInputTokens,
+    outputTokens,
+    reasoningOutputTokens,
+    fastMode: input.fastMode,
+  });
+
+  if (creditsUsed === null) {
+    return null;
+  }
+
+  return {
+    turnId,
+    model,
+    pricingMode: "token-based",
+    inputTokens,
+    cachedInputTokens,
+    outputTokens,
+    reasoningOutputTokens,
+    creditsUsed,
+    usdCost: null,
+    completedAt: input.event.createdAt,
+  };
 }
 
 function orchestrationSessionStatusFromRuntimeState(
@@ -504,6 +707,7 @@ function runtimeEventToActivities(
 const make = Effect.fn("make")(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
   const providerService = yield* ProviderService;
+  const codexUsage = yield* CodexUsage;
   const projectionTurnRepository = yield* ProjectionTurnRepository;
   const serverSettingsService = yield* ServerSettingsService;
 
@@ -876,6 +1080,7 @@ const make = Effect.fn("make")(function* () {
   const processRuntimeEvent = Effect.fn("processRuntimeEvent")(function* (
     event: ProviderRuntimeEvent,
   ) {
+    yield* codexUsage.ingestRuntimeEvent(event);
     const readModel = yield* orchestrationEngine.getReadModel();
     const thread = readModel.threads.find((entry) => entry.id === event.threadId);
     if (!thread) return;
@@ -1133,6 +1338,46 @@ const make = Effect.fn("make")(function* () {
           turnId,
           updatedAt: now,
         });
+
+        if (event.provider === "codex" && thread.modelSelection.provider === "codex") {
+          const turnUsageSummary = buildCodexTurnUsageSummary({
+            event,
+            threadModel: thread.modelSelection.model,
+            fastMode: thread.modelSelection.options?.fastMode === true,
+          });
+          if (turnUsageSummary) {
+            yield* orchestrationEngine.dispatch({
+              type: "thread.turn-usage-summary.upsert",
+              commandId: providerCommandId(event, "thread-turn-usage-summary-upsert"),
+              threadId: thread.id,
+              summary: turnUsageSummary,
+              createdAt: now,
+            });
+          }
+        }
+      }
+    }
+
+    if (event.type === "thread.token-usage.updated") {
+      const turnId = toTurnId(event.turnId);
+      if (turnId && event.provider === "codex" && thread.modelSelection.provider === "codex") {
+        const turnUsageSummary = buildCodexTurnUsageSummaryFromTokenUsageEvent({
+          event,
+          threadModel: thread.modelSelection.model,
+          fastMode: thread.modelSelection.options?.fastMode === true,
+        });
+        if (turnUsageSummary) {
+          yield* orchestrationEngine.dispatch({
+            type: "thread.turn-usage-summary.upsert",
+            commandId: providerCommandId(
+              event,
+              "thread-turn-usage-summary-upsert-from-token-usage",
+            ),
+            threadId: thread.id,
+            summary: turnUsageSummary,
+            createdAt: now,
+          });
+        }
       }
     }
 

@@ -40,6 +40,7 @@ import { ProjectionThreadActivity } from "../../persistence/Services/ProjectionT
 import { ProjectionThreadMessage } from "../../persistence/Services/ProjectionThreadMessages.ts";
 import { ProjectionThreadProposedPlan } from "../../persistence/Services/ProjectionThreadProposedPlans.ts";
 import { ProjectionThreadSession } from "../../persistence/Services/ProjectionThreadSessions.ts";
+import { ProjectionThreadTurnUsage } from "../../persistence/Services/ProjectionThreadTurnUsages.ts";
 import { ProjectionThread } from "../../persistence/Services/ProjectionThreads.ts";
 import { RepositoryIdentityResolver } from "../../project/Services/RepositoryIdentityResolver.ts";
 import { ORCHESTRATION_PROJECTOR_NAMES } from "./ProjectionPipeline.ts";
@@ -78,6 +79,7 @@ const ProjectionThreadActivityDbRowSchema = ProjectionThreadActivity.mapFields(
   }),
 );
 const ProjectionThreadSessionDbRowSchema = ProjectionThreadSession;
+const ProjectionThreadTurnUsageDbRowSchema = ProjectionThreadTurnUsage;
 const ProjectionCheckpointDbRowSchema = ProjectionCheckpoint.mapFields(
   Struct.assign({
     files: Schema.fromJsonString(Schema.Array(OrchestrationCheckpointFile)),
@@ -125,6 +127,7 @@ const REQUIRED_SNAPSHOT_PROJECTORS = [
   ORCHESTRATION_PROJECTOR_NAMES.threadMessages,
   ORCHESTRATION_PROJECTOR_NAMES.threadProposedPlans,
   ORCHESTRATION_PROJECTOR_NAMES.threadActivities,
+  ORCHESTRATION_PROJECTOR_NAMES.threadTurnUsages,
   ORCHESTRATION_PROJECTOR_NAMES.threadSessions,
   ORCHESTRATION_PROJECTOR_NAMES.checkpoints,
 ] as const;
@@ -358,6 +361,28 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           updated_at AS "updatedAt"
         FROM projection_thread_sessions
         ORDER BY thread_id ASC
+      `,
+  });
+
+  const listThreadTurnUsageRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: ProjectionThreadTurnUsageDbRowSchema,
+    execute: () =>
+      sql`
+        SELECT
+          thread_id AS "threadId",
+          turn_id AS "turnId",
+          model,
+          pricing_mode AS "pricingMode",
+          input_tokens AS "inputTokens",
+          cached_input_tokens AS "cachedInputTokens",
+          output_tokens AS "outputTokens",
+          reasoning_output_tokens AS "reasoningOutputTokens",
+          credits_used AS "creditsUsed",
+          usd_cost AS "usdCost",
+          completed_at AS "completedAt"
+        FROM projection_thread_turn_usages
+        ORDER BY thread_id ASC, completed_at ASC, turn_id ASC
       `,
   });
 
@@ -618,6 +643,29 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       `,
   });
 
+  const listThreadTurnUsageRowsByThread = SqlSchema.findAll({
+    Request: ThreadIdLookupInput,
+    Result: ProjectionThreadTurnUsageDbRowSchema,
+    execute: ({ threadId }) =>
+      sql`
+        SELECT
+          thread_id AS "threadId",
+          turn_id AS "turnId",
+          model,
+          pricing_mode AS "pricingMode",
+          input_tokens AS "inputTokens",
+          cached_input_tokens AS "cachedInputTokens",
+          output_tokens AS "outputTokens",
+          reasoning_output_tokens AS "reasoningOutputTokens",
+          credits_used AS "creditsUsed",
+          usd_cost AS "usdCost",
+          completed_at AS "completedAt"
+        FROM projection_thread_turn_usages
+        WHERE thread_id = ${threadId}
+        ORDER BY completed_at ASC, turn_id ASC
+      `,
+  });
+
   const getLatestTurnRowByThread = SqlSchema.findOneOption({
     Request: ThreadIdLookupInput,
     Result: ProjectionLatestTurnDbRowSchema,
@@ -716,6 +764,14 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               ),
             ),
           ),
+          listThreadTurnUsageRows(undefined).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "ProjectionSnapshotQuery.getSnapshot:listThreadTurnUsages:query",
+                "ProjectionSnapshotQuery.getSnapshot:listThreadTurnUsages:decodeRows",
+              ),
+            ),
+          ),
           listCheckpointRows(undefined).pipe(
             Effect.mapError(
               toPersistenceSqlOrDecodeError(
@@ -751,6 +807,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             proposedPlanRows,
             activityRows,
             sessionRows,
+            turnUsageRows,
             checkpointRows,
             latestTurnRows,
             stateRows,
@@ -759,6 +816,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               const messagesByThread = new Map<string, Array<OrchestrationMessage>>();
               const proposedPlansByThread = new Map<string, Array<OrchestrationProposedPlan>>();
               const activitiesByThread = new Map<string, Array<OrchestrationThreadActivity>>();
+              const turnUsagesByThread = new Map<
+                string,
+                Array<OrchestrationThread["turnUsageSummaries"][number]>
+              >();
               const checkpointsByThread = new Map<string, Array<OrchestrationCheckpointSummary>>();
               const sessionsByThread = new Map<string, OrchestrationSession>();
               const latestTurnByThread = new Map<string, OrchestrationLatestTurn>();
@@ -820,6 +881,24 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   createdAt: row.createdAt,
                 });
                 activitiesByThread.set(row.threadId, threadActivities);
+              }
+
+              for (const row of turnUsageRows) {
+                updatedAt = maxIso(updatedAt, row.completedAt);
+                const threadTurnUsages = turnUsagesByThread.get(row.threadId) ?? [];
+                threadTurnUsages.push({
+                  turnId: row.turnId,
+                  model: row.model,
+                  pricingMode: row.pricingMode,
+                  inputTokens: row.inputTokens,
+                  cachedInputTokens: row.cachedInputTokens,
+                  outputTokens: row.outputTokens,
+                  reasoningOutputTokens: row.reasoningOutputTokens,
+                  creditsUsed: row.creditsUsed,
+                  usdCost: row.usdCost,
+                  completedAt: row.completedAt,
+                });
+                turnUsagesByThread.set(row.threadId, threadTurnUsages);
               }
 
               for (const row of checkpointRows) {
@@ -926,6 +1005,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                 messages: messagesByThread.get(row.threadId) ?? [],
                 proposedPlans: proposedPlansByThread.get(row.threadId) ?? [],
                 activities: activitiesByThread.get(row.threadId) ?? [],
+                turnUsageSummaries: turnUsagesByThread.get(row.threadId) ?? [],
                 checkpoints: checkpointsByThread.get(row.threadId) ?? [],
                 session: sessionsByThread.get(row.threadId) ?? null,
               }));
@@ -1275,6 +1355,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         messageRows,
         proposedPlanRows,
         activityRows,
+        turnUsageRows,
         checkpointRows,
         latestTurnRow,
         sessionRow,
@@ -1308,6 +1389,14 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             toPersistenceSqlOrDecodeError(
               "ProjectionSnapshotQuery.getThreadDetailById:listActivities:query",
               "ProjectionSnapshotQuery.getThreadDetailById:listActivities:decodeRows",
+            ),
+          ),
+        ),
+        listThreadTurnUsageRowsByThread({ threadId }).pipe(
+          Effect.mapError(
+            toPersistenceSqlOrDecodeError(
+              "ProjectionSnapshotQuery.getThreadDetailById:listTurnUsages:query",
+              "ProjectionSnapshotQuery.getThreadDetailById:listTurnUsages:decodeRows",
             ),
           ),
         ),
@@ -1394,6 +1483,18 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           }
           return activity;
         }),
+        turnUsageSummaries: turnUsageRows.map((row) => ({
+          turnId: row.turnId,
+          model: row.model,
+          pricingMode: row.pricingMode,
+          inputTokens: row.inputTokens,
+          cachedInputTokens: row.cachedInputTokens,
+          outputTokens: row.outputTokens,
+          reasoningOutputTokens: row.reasoningOutputTokens,
+          creditsUsed: row.creditsUsed,
+          usdCost: row.usdCost,
+          completedAt: row.completedAt,
+        })),
         checkpoints: checkpointRows.map((row) => ({
           turnId: row.turnId,
           checkpointTurnCount: row.checkpointTurnCount,

@@ -114,10 +114,15 @@ import { useSettings } from "../hooks/useSettings";
 import { resolveAppModelSelection } from "../modelSelection";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { deriveLogicalProjectKeyFromSettings } from "../logicalProject";
+import { useCodexUsageSnapshot } from "../rpc/codexUsageState";
 import {
   useSavedEnvironmentRegistryStore,
   useSavedEnvironmentRuntimeStore,
 } from "../environments/runtime";
+
+function formatCredits(credits: number): string {
+  return `${credits.toFixed(2)} credits`;
+}
 import { buildDraftThreadRouteParams } from "../threadRoutes";
 import {
   type ComposerImageAttachment,
@@ -607,6 +612,7 @@ export default function ChatView(props: ChatViewProps) {
     routeKind === "server" ? store.threadLastVisitedAtById[routeThreadKey] : undefined,
   );
   const settings = useSettings();
+  const codexUsageSnapshot = useCodexUsageSnapshot();
   const setStickyComposerModelSelection = useComposerDraftStore(
     (store) => store.setStickyModelSelection,
   );
@@ -798,6 +804,56 @@ export default function ChatView(props: ChatViewProps) {
     return openTerminalThreadKeys.filter((nextThreadKey) => existingThreadKeys.has(nextThreadKey));
   }, [draftThreadKeys, openTerminalThreadKeys, serverThreadKeys]);
   const activeLatestTurn = activeThread?.latestTurn ?? null;
+  const canShowCodexCreditCosts =
+    activeThread?.modelSelection.provider === "codex" &&
+    codexUsageSnapshot?.entitlement.showCreditCosts === true;
+  const showCodexPerMessageCredits = canShowCodexCreditCosts && settings.showCodexPerMessageCredits;
+  const codexTurnUsageByTurnId = useMemo(
+    () =>
+      new Map(
+        (activeThread?.turnUsageSummaries ?? []).map(
+          (summary) => [summary.turnId, summary] as const,
+        ),
+      ),
+    [activeThread?.turnUsageSummaries],
+  );
+  const sessionCreditSummary = useMemo(() => {
+    if (!activeThread || !canShowCodexCreditCosts) {
+      return null;
+    }
+    const summaries = activeThread.turnUsageSummaries ?? [];
+    const totalCredits = summaries.reduce((total, summary) => total + summary.creditsUsed, 0);
+    if (totalCredits <= 0) {
+      return null;
+    }
+
+    const totals = summaries.reduce(
+      (acc, summary) => ({
+        inputTokens: acc.inputTokens + summary.inputTokens,
+        cachedInputTokens: acc.cachedInputTokens + summary.cachedInputTokens,
+        outputTokens: acc.outputTokens + summary.outputTokens + summary.reasoningOutputTokens,
+      }),
+      { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0 },
+    );
+    const assistantTurnCount = new Set(
+      activeThread.messages.flatMap((message) =>
+        message.role === "assistant" && message.turnId ? [message.turnId] : [],
+      ),
+    ).size;
+    const omittedCount = Math.max(0, assistantTurnCount - summaries.length);
+
+    return {
+      label: `Session: ${formatCredits(totalCredits)}`,
+      detail: [
+        `Input ${totals.inputTokens.toLocaleString()}`,
+        `Cached ${totals.cachedInputTokens.toLocaleString()}`,
+        `Output ${totals.outputTokens.toLocaleString()}`,
+        ...(omittedCount > 0
+          ? [`${omittedCount} turn${omittedCount === 1 ? "" : "s"} omitted`]
+          : []),
+      ].join(" • "),
+    };
+  }, [activeThread, canShowCodexCreditCosts]);
   const threadPlanCatalog = useThreadPlanCatalog(
     useMemo(() => {
       const threadIds: ThreadId[] = [];
@@ -3236,6 +3292,7 @@ export default function ChatView(props: ChatViewProps) {
           diffToggleShortcutLabel={diffPanelShortcutLabel}
           gitCwd={gitCwd}
           diffOpen={diffOpen}
+          sessionCreditSummary={sessionCreditSummary}
           onRunProjectScript={runProjectScript}
           onAddProjectScript={saveProjectScript}
           onUpdateProjectScript={updateProjectScript}
@@ -3280,6 +3337,9 @@ export default function ChatView(props: ChatViewProps) {
               resolvedTheme={resolvedTheme}
               timestampFormat={timestampFormat}
               workspaceRoot={activeWorkspaceRoot}
+              showCodexPerMessageCredits={showCodexPerMessageCredits}
+              showCodexCreditCosts={canShowCodexCreditCosts}
+              codexTurnUsageByTurnId={codexTurnUsageByTurnId}
               onIsAtEndChange={onIsAtEndChange}
             />
 

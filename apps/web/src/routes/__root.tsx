@@ -35,6 +35,7 @@ import {
   useServerConfigUpdatedSubscription,
   useServerWelcomeSubscription,
 } from "../rpc/serverState";
+import { startCodexUsageSync } from "../rpc/codexUsageState";
 import { useStore } from "../store";
 import { useUiStateStore } from "../uiStateStore";
 import { syncBrowserChromeTheme } from "../hooks/useTheme";
@@ -94,6 +95,7 @@ function RootRouteView() {
       <AnchoredToastProvider>
         <AuthenticatedTracingBootstrap />
         <ServerStateBootstrap />
+        <CodexUsageBootstrap />
         <EnvironmentConnectionManagerBootstrap />
         <EventRouter />
         <WebSocketConnectionCoordinator />
@@ -183,6 +185,12 @@ function errorDetails(error: unknown): string {
 
 function ServerStateBootstrap() {
   useEffect(() => startServerStateSync(getPrimaryEnvironmentConnection().client.server), []);
+
+  return null;
+}
+
+function CodexUsageBootstrap() {
+  useEffect(() => startCodexUsageSync(getPrimaryEnvironmentConnection().client.server), []);
 
   return null;
 }

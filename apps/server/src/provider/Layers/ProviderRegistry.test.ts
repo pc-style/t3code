@@ -197,6 +197,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
             Effect.succeed({
               type: "chatgpt" as const,
               planType: "pro" as const,
+              planSubtype: null,
+              billingType: null,
+              seatType: null,
               sparkEnabled: true,
             }),
           );
@@ -230,6 +233,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
               Effect.succeed({
                 type: "chatgpt" as const,
                 planType: "pro" as const,
+                planSubtype: null,
+                billingType: null,
+                seatType: null,
                 sparkEnabled: true,
               }),
             () =>
@@ -272,6 +278,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
             Effect.succeed({
               type: "chatgpt" as const,
               planType: "plus" as const,
+              planSubtype: null,
+              billingType: null,
+              seatType: null,
               sparkEnabled: false,
             }),
           );
@@ -304,6 +313,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
             Effect.succeed({
               type: "chatgpt" as const,
               planType: "team" as const,
+              planSubtype: null,
+              billingType: null,
+              seatType: null,
               sparkEnabled: false,
             }),
           );
@@ -334,6 +346,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
             Effect.succeed({
               type: "apiKey" as const,
               planType: null,
+              planSubtype: null,
+              billingType: null,
+              seatType: null,
               sparkEnabled: false,
             }),
           );
