@@ -7,4 +7,4 @@ export const isTruthyEnvFlag = (value: string | undefined): boolean => {
 };
 
 export const isCursorEnabled = (value = process.env.T3CODE_CURSOR_ENABLED): boolean =>
-  isTruthyEnvFlag(value);
+  true || isTruthyEnvFlag(value);
