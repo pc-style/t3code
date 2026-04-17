@@ -9,6 +9,7 @@ export * from "./model.ts";
 export * from "./keybindings.ts";
 export * from "./server.ts";
 export * from "./settings.ts";
+export * from "./codexUsage.ts";
 export * from "./git.ts";
 export * from "./orchestration.ts";
 export * from "./editor.ts";

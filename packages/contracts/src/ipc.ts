@@ -26,6 +26,7 @@ import type {
   ProjectWriteFileResult,
 } from "./project.ts";
 import type {
+  CodexUsageSnapshot,
   ServerConfig,
   ServerProviderUpdatedPayload,
   ServerUpsertKeybindingResult,
@@ -216,6 +217,7 @@ export interface LocalApi {
   server: {
     getConfig: () => Promise<ServerConfig>;
     refreshProviders: () => Promise<ServerProviderUpdatedPayload>;
+    getCodexUsage: (input?: { forceRefresh?: boolean }) => Promise<CodexUsageSnapshot>;
     upsertKeybinding: (input: ServerUpsertKeybindingInput) => Promise<ServerUpsertKeybindingResult>;
     getSettings: () => Promise<ServerSettings>;
     updateSettings: (patch: ServerSettingsPatch) => Promise<ServerSettings>;

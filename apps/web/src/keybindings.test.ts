@@ -7,6 +7,10 @@ import {
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
 import {
+  buildKeybindingRuleFromResolved,
+  encodeShortcutValue,
+  encodeWhenAst,
+  findResolvedKeybindingRuleForCommand,
   formatShortcutLabel,
   isChatNewShortcut,
   isChatNewLocalShortcut,
@@ -18,6 +22,7 @@ import {
   isTerminalSplitShortcut,
   isTerminalToggleShortcut,
   resolveShortcutCommand,
+  shortcutFromEvent,
   shouldShowThreadJumpHints,
   shortcutLabelForCommand,
   terminalDeleteShortcutData,
@@ -541,6 +546,51 @@ describe("formatShortcutLabel", () => {
   it("formats labels for plus key", () => {
     assert.strictEqual(formatShortcutLabel(modShortcut("+"), "MacIntel"), "⌘+");
     assert.strictEqual(formatShortcutLabel(modShortcut("+"), "Linux"), "Ctrl++");
+  });
+});
+
+describe("shortcut recording helpers", () => {
+  it("normalizes bracket and digit shortcuts using the physical key code", () => {
+    assert.strictEqual(
+      encodeShortcutValue(
+        shortcutFromEvent(event({ key: "{", code: "BracketLeft", metaKey: true, shiftKey: true }))!,
+      ),
+      "meta+shift+[",
+    );
+    assert.strictEqual(
+      encodeShortcutValue(shortcutFromEvent(event({ key: "!", code: "Digit1", ctrlKey: true }))!),
+      "ctrl+1",
+    );
+  });
+
+  it("preserves the plus key and ignores bare modifier presses", () => {
+    assert.strictEqual(
+      encodeShortcutValue(shortcutFromEvent(event({ key: "+", code: "Equal", ctrlKey: true }))!),
+      "ctrl++",
+    );
+    assert.isNull(shortcutFromEvent(event({ key: "Meta", metaKey: true })));
+  });
+});
+
+describe("resolved binding helpers", () => {
+  it("finds the last rule for a command and rehydrates a writable rule", () => {
+    const bindings = compile([
+      { shortcut: modShortcut("j"), command: "terminal.toggle" },
+      {
+        shortcut: modShortcut("d"),
+        command: "terminal.split",
+        whenAst: whenAnd(whenIdentifier("terminalOpen"), whenNot(whenIdentifier("terminalFocus"))),
+      },
+    ]);
+
+    const binding = findResolvedKeybindingRuleForCommand(bindings, "terminal.split");
+    assert.isNotNull(binding);
+    assert.strictEqual(encodeWhenAst(binding.whenAst!), "(terminalOpen && !(terminalFocus))");
+    assert.deepStrictEqual(buildKeybindingRuleFromResolved(binding, "mod+shift+\\"), {
+      key: "mod+shift+\\",
+      command: "terminal.split",
+      when: "(terminalOpen && !(terminalFocus))",
+    });
   });
 });
 

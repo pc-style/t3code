@@ -1,7 +1,9 @@
 import {
   type KeybindingCommand,
+  type KeybindingRule,
   type KeybindingShortcut,
   type KeybindingWhenNode,
+  type ResolvedKeybindingRule,
   type ResolvedKeybindingsConfig,
   THREAD_JUMP_KEYBINDING_COMMANDS,
   type ThreadJumpKeybindingCommand,
@@ -39,8 +41,11 @@ const TERMINAL_LINE_START = "\u0001";
 const TERMINAL_LINE_END = "\u0005";
 const TERMINAL_DELETE_TO_LINE_START = "\u0015";
 const EVENT_CODE_KEY_ALIASES: Readonly<Record<string, readonly string[]>> = {
+  Backquote: ["`"],
+  Backslash: ["\\"],
   BracketLeft: ["["],
   BracketRight: ["]"],
+  Comma: [","],
   Digit0: ["0"],
   Digit1: ["1"],
   Digit2: ["2"],
@@ -51,7 +56,14 @@ const EVENT_CODE_KEY_ALIASES: Readonly<Record<string, readonly string[]>> = {
   Digit7: ["7"],
   Digit8: ["8"],
   Digit9: ["9"],
+  Equal: ["="],
+  Minus: ["-"],
+  Period: ["."],
+  Quote: ["'"],
+  Semicolon: [";"],
+  Slash: ["/"],
 };
+const MODIFIER_EVENT_KEYS = new Set(["meta", "control", "shift", "alt"]);
 
 function normalizeEventKey(key: string): string {
   const normalized = key.toLowerCase();
@@ -210,6 +222,70 @@ function formatShortcutKeyLabel(key: string): string {
   return key.slice(0, 1).toUpperCase() + key.slice(1);
 }
 
+function encodeShortcutKey(key: string): string {
+  return key === " " ? "space" : key;
+}
+
+function normalizeRecordedEventKey(event: ShortcutEventLike): string | null {
+  const normalizedKey = normalizeEventKey(event.key);
+  if (MODIFIER_EVENT_KEYS.has(normalizedKey) || normalizedKey === "dead") {
+    return null;
+  }
+  if (normalizedKey === " ") {
+    return " ";
+  }
+  if (normalizedKey === "+" || normalizedKey.length !== 1) {
+    return normalizedKey;
+  }
+  const alias = event.code ? EVENT_CODE_KEY_ALIASES[event.code]?.[0] : undefined;
+  return alias ?? normalizedKey;
+}
+
+export function encodeShortcutValue(shortcut: KeybindingShortcut): string {
+  const modifiers: string[] = [];
+  if (shortcut.modKey) modifiers.push("mod");
+  if (shortcut.metaKey) modifiers.push("meta");
+  if (shortcut.ctrlKey) modifiers.push("ctrl");
+  if (shortcut.altKey) modifiers.push("alt");
+  if (shortcut.shiftKey) modifiers.push("shift");
+  return [...modifiers, encodeShortcutKey(shortcut.key)].join("+");
+}
+
+export function shortcutFromEvent(event: ShortcutEventLike): KeybindingShortcut | null {
+  const key = normalizeRecordedEventKey(event);
+  if (!key) return null;
+  return {
+    key,
+    metaKey: event.metaKey,
+    ctrlKey: event.ctrlKey,
+    shiftKey: event.shiftKey,
+    altKey: event.altKey,
+    modKey: false,
+  };
+}
+
+export function keybindingValueFromEvent(
+  event: ShortcutEventLike,
+  platform = navigator.platform,
+): string | null {
+  const shortcut = shortcutFromEvent(event);
+  if (!shortcut) return null;
+  const useMetaForMod = isMacPlatform(platform);
+  const useMod =
+    (useMetaForMod && shortcut.metaKey && !shortcut.ctrlKey) ||
+    (!useMetaForMod && shortcut.ctrlKey && !shortcut.metaKey);
+  const normalizedShortcut: KeybindingShortcut = {
+    key: shortcut.key,
+    metaKey: useMod ? false : shortcut.metaKey,
+    ctrlKey: useMod ? false : shortcut.ctrlKey,
+    shiftKey: shortcut.shiftKey,
+    altKey: shortcut.altKey,
+    modKey: useMod,
+  };
+
+  return encodeShortcutValue(normalizedShortcut);
+}
+
 export function formatShortcutLabel(
   shortcut: KeybindingShortcut,
   platform = navigator.platform,
@@ -232,6 +308,43 @@ export function formatShortcutLabel(
   if (showMeta) parts.push("Meta");
   parts.push(keyLabel);
   return parts.join("+");
+}
+
+export function encodeWhenAst(node: KeybindingWhenNode): string {
+  switch (node.type) {
+    case "identifier":
+      return node.name;
+    case "not":
+      return `!(${encodeWhenAst(node.node)})`;
+    case "and":
+      return `(${encodeWhenAst(node.left)} && ${encodeWhenAst(node.right)})`;
+    case "or":
+      return `(${encodeWhenAst(node.left)} || ${encodeWhenAst(node.right)})`;
+  }
+}
+
+export function findResolvedKeybindingRuleForCommand(
+  keybindings: ResolvedKeybindingsConfig,
+  command: KeybindingCommand,
+): ResolvedKeybindingRule | null {
+  for (let index = keybindings.length - 1; index >= 0; index -= 1) {
+    const binding = keybindings[index];
+    if (binding?.command === command) {
+      return binding;
+    }
+  }
+  return null;
+}
+
+export function buildKeybindingRuleFromResolved(
+  binding: ResolvedKeybindingRule,
+  key: string,
+): KeybindingRule {
+  return {
+    key,
+    command: binding.command,
+    ...(binding.whenAst ? { when: encodeWhenAst(binding.whenAst) } : {}),
+  };
 }
 
 export function shortcutLabelForCommand(

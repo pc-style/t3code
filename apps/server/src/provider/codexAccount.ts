@@ -14,6 +14,9 @@ export type CodexPlanType =
 export interface CodexAccountSnapshot {
   readonly type: "apiKey" | "chatgpt" | "unknown";
   readonly planType: CodexPlanType | null;
+  readonly planSubtype: string | null;
+  readonly billingType: string | null;
+  readonly seatType: string | null;
   readonly sparkEnabled: boolean;
 }
 
@@ -41,15 +44,36 @@ export function readCodexAccountSnapshot(response: unknown): CodexAccountSnapsho
     return {
       type: "apiKey",
       planType: null,
+      planSubtype: null,
+      billingType: null,
+      seatType: null,
       sparkEnabled: false,
     };
   }
 
   if (accountType === "chatgpt") {
     const planType = (account?.planType as CodexPlanType | null) ?? "unknown";
+    const planSubtype =
+      asString(account?.planSubtype) ??
+      asString(account?.subtype) ??
+      asString(asObject(account?.plan)?.subtype) ??
+      null;
+    const billingType =
+      asString(account?.billingType) ??
+      asString(asObject(account?.billing)?.type) ??
+      asString(asObject(account?.plan)?.billingType) ??
+      null;
+    const seatType =
+      asString(account?.seatType) ??
+      asString(asObject(account?.seat)?.type) ??
+      asString(asObject(account?.plan)?.seatType) ??
+      null;
     return {
       type: "chatgpt",
       planType,
+      planSubtype,
+      billingType,
+      seatType,
       sparkEnabled: CODEX_SPARK_ENABLED_PLAN_TYPES.has(planType),
     };
   }
@@ -57,6 +81,9 @@ export function readCodexAccountSnapshot(response: unknown): CodexAccountSnapsho
   return {
     type: "unknown",
     planType: null,
+    planSubtype: null,
+    billingType: null,
+    seatType: null,
     sparkEnabled: false,
   };
 }
