@@ -130,6 +130,11 @@ function createBaseServerConfig(): ServerConfig {
           serverPassword: "",
           customModels: [],
         },
+        piAgent: {
+          enabled: false,
+          binaryPath: "",
+          customModels: [],
+        },
       },
     },
   };

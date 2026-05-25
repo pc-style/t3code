@@ -131,6 +131,7 @@ const CODEX_DRIVER_KIND = ProviderDriverKind.make("codex");
 const CLAUDE_DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
 const CURSOR_DRIVER_KIND = ProviderDriverKind.make("cursor");
 const OPENCODE_DRIVER_KIND = ProviderDriverKind.make("opencode");
+const PI_AGENT_DRIVER_KIND = ProviderDriverKind.make("piAgent");
 
 export const DEFAULT_MODEL = "gpt-5.4";
 export const DEFAULT_GIT_TEXT_GENERATION_MODEL = "gpt-5.4-mini";
@@ -140,6 +141,7 @@ export const DEFAULT_MODEL_BY_PROVIDER: Partial<Record<ProviderDriverKind, strin
   [CLAUDE_DRIVER_KIND]: "claude-sonnet-4-6",
   [CURSOR_DRIVER_KIND]: "auto",
   [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
+  [PI_AGENT_DRIVER_KIND]: "anthropic/claude-sonnet-4-6",
 };
 
 /** Per-provider text generation model defaults. */
@@ -150,6 +152,7 @@ export const DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER: Partial<
   [CLAUDE_DRIVER_KIND]: "claude-haiku-4-5",
   [CURSOR_DRIVER_KIND]: "composer-2",
   [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
+  [PI_AGENT_DRIVER_KIND]: "anthropic/claude-sonnet-4-6",
 };
 
 export const MODEL_SLUG_ALIASES_BY_PROVIDER: Partial<
