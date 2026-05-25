@@ -96,6 +96,25 @@ describe("resolvePiAuthStatus", () => {
     ).toMatchObject({ status: "unauthenticated", type: "environment" });
   });
 
+  it("does not accept synthesized env names for known Pi providers", () => {
+    expect(
+      resolvePiAuthStatus({
+        models: [
+          {
+            slug: "openai/gpt-5.4",
+            name: "GPT-5.4",
+            isCustom: false,
+            capabilities: EMPTY_CAPABILITIES,
+          },
+        ],
+        environment: { OPENAI_COMPATIBLE_API_KEY: "secret" },
+      }),
+    ).toMatchObject({
+      status: "unauthenticated",
+      label: "Set one of OPENAI_API_KEY for the configured Pi models.",
+    });
+  });
+
   it("supports custom Pi providers with derived API key env names", () => {
     expect(
       resolvePiAuthStatus({

@@ -121,8 +121,11 @@ function defaultPiProviderAuthEnv(provider: string): string | undefined {
 
 function piAuthEnvNamesForProvider(provider: string): ReadonlyArray<string> {
   const configured = PI_AUTH_ENV_BY_PROVIDER[provider] ?? [];
+  if (configured.length > 0) {
+    return configured;
+  }
   const fallback = defaultPiProviderAuthEnv(provider);
-  return fallback ? [...configured, fallback] : configured;
+  return fallback ? [fallback] : [];
 }
 
 export function resolvePiAuthStatus(input: {
