@@ -97,20 +97,43 @@ export function parsePiListModelsOutput(output: string): ReadonlyArray<PiListedM
   return models;
 }
 
+/**
+ * Extract the underlying provider id (the segment before the first `/`) from
+ * a Pi model slug like `openai/gpt-5.5` → `openai`. Returns undefined if the
+ * slug is not in `provider/model` form so callers can fall back gracefully.
+ */
+export function piSubProviderFromSlug(slug: string): string | undefined {
+  const trimmed = slug.trim();
+  const slashIndex = trimmed.indexOf("/");
+  if (slashIndex <= 0 || slashIndex >= trimmed.length - 1) {
+    return undefined;
+  }
+  const candidate = trimmed.slice(0, slashIndex).trim();
+  return candidate.length > 0 ? candidate : undefined;
+}
+
 export function piListedModelsToServerModels(
   listed: ReadonlyArray<PiListedModel>,
 ): ReadonlyArray<ServerProviderModel> {
   return listed.map((entry) => ({
     slug: entry.slug,
-    name: entry.modelId,
+    // Include the provider prefix in the name itself so the picker row's
+    // title clearly distinguishes otherwise-identical model ids served by
+    // different Pi providers (e.g. five `gpt-5.5` entries from openai,
+    // azure, github-copilot, etc.). `subProvider` is also set so the
+    // search ranking + provider subtitle can filter by provider.
+    name: entry.slug,
+    subProvider: entry.provider,
     isCustom: false,
     capabilities: DEFAULT_CAPABILITIES,
   }));
 }
 
 export function withPiModelCapabilities(model: ServerProviderModel): ServerProviderModel {
+  const subProvider = model.subProvider ?? piSubProviderFromSlug(model.slug);
   return {
     ...model,
+    ...(subProvider ? { subProvider } : {}),
     capabilities: DEFAULT_CAPABILITIES,
   };
 }
@@ -133,9 +156,11 @@ export function mergePiProviderModels(input: {
     if (!slug.includes("/") || merged.has(slug)) {
       continue;
     }
+    const subProvider = piSubProviderFromSlug(slug);
     merged.set(slug, {
       slug,
       name: slug,
+      ...(subProvider ? { subProvider } : {}),
       isCustom: true,
       capabilities: DEFAULT_CAPABILITIES,
     });
