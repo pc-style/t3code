@@ -21,6 +21,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Random from "effect/Random";
 import * as Ref from "effect/Ref";
@@ -73,6 +74,7 @@ interface PiSessionContext {
   readonly pendingExtensionUi: Map<ApprovalRequestId, PendingExtensionUi>;
   readonly assistantItemIdByMessageKey: Map<string, string>;
   activeTurnId?: TurnId;
+  agentEndSignal?: Deferred.Deferred<void, never>;
   stopped: boolean;
 }
 
@@ -215,7 +217,12 @@ export const makePiAgentAdapter = (
             const streamKind =
               assistantEvent.type === "thinking_delta" ? "reasoning_text" : "assistant_text";
             const message = isRecord(event.message) ? event.message : undefined;
-            const messageKey = message && typeof message.id === "string" ? message.id : undefined;
+            const messageKey =
+              message && typeof message.id === "string"
+                ? message.id
+                : message
+                  ? `${ctx.threadId}:message_update:${ctx.activeTurnId ?? "none"}`
+                  : undefined;
             const itemId = messageKey ? ctx.assistantItemIdByMessageKey.get(messageKey) : undefined;
             yield* offerRuntimeEvent(
               makePiContentDeltaEvent({
@@ -287,6 +294,14 @@ export const makePiAgentAdapter = (
             );
             return;
           }
+          case "agent_end": {
+            const signal = ctx.agentEndSignal;
+            if (signal) {
+              delete ctx.agentEndSignal;
+              yield* Deferred.succeed(signal, undefined);
+            }
+            return;
+          }
           default:
             return;
         }
@@ -295,7 +310,15 @@ export const makePiAgentAdapter = (
     const startSession: PiAgentAdapterShape["startSession"] = (input) =>
       Effect.scoped(
         Effect.gen(function* () {
-          const sessionScope = yield* Scope.make();
+          const sessionScope = yield* Scope.make("sequential");
+          let sessionScopeTransferred = false;
+          yield* Effect.addFinalizer(() =>
+            sessionScopeTransferred ? Effect.void : Scope.close(sessionScope, Exit.void),
+          );
+
+          const initialModel = input.modelSelection?.model
+            ? parsePiModelSlug(input.modelSelection.model)
+            : undefined;
           const runtime = yield* makePiRpcSessionRuntime({
             spawn: {
               command: binaryPath,
@@ -304,8 +327,33 @@ export const makePiAgentAdapter = (
               env: processEnv,
             },
             childProcessSpawner: spawner,
-          });
-          yield* runtime.start();
+            extraArgs: [
+              "--no-session",
+              "--no-tools",
+              ...(initialModel
+                ? ["--provider", initialModel.provider, "--model", initialModel.modelId]
+                : []),
+            ],
+          }).pipe(Effect.provideService(Scope.Scope, sessionScope));
+          yield* runtime.start().pipe(
+            Effect.mapError(
+              (cause) =>
+                new ProviderAdapterProcessError({
+                  provider: PROVIDER,
+                  threadId: input.threadId,
+                  detail: PiRpcSessionRuntimeError.is(cause) ? cause.detail : String(cause),
+                  cause,
+                }),
+            ),
+            Effect.onError(() =>
+              runtime
+                .stop()
+                .pipe(
+                  Effect.andThen(Effect.ignore(Scope.close(sessionScope, Exit.void))),
+                  Effect.ignore,
+                ),
+            ),
+          );
 
           const resume = parsePiResume(input.resumeCursor);
           if (resume) {
@@ -368,21 +416,7 @@ export const makePiAgentAdapter = (
             return next;
           });
 
-          yield* Scope.addFinalizer(
-            sessionScope,
-            Effect.gen(function* () {
-              ctx.stopped = true;
-              if (ctx.eventFiber) {
-                yield* Fiber.interrupt(ctx.eventFiber).pipe(Effect.ignore);
-              }
-              yield* runtime.stop().pipe(Effect.ignore);
-              yield* Ref.update(sessions, (map) => {
-                const next = new Map(map);
-                next.delete(input.threadId);
-                return next;
-              });
-            }),
-          );
+          sessionScopeTransferred = true;
 
           yield* offerRuntimeEvent({
             type: "session.started",
@@ -421,7 +455,12 @@ export const makePiAgentAdapter = (
         const turnId = TurnId.make(crypto.randomUUID());
         const modelSlug = input.modelSelection?.model ?? ctx.session.model;
         const parsedModel = modelSlug ? parsePiModelSlug(modelSlug) : undefined;
-        if (parsedModel) {
+        const activeModel = ctx.session.model ? parsePiModelSlug(ctx.session.model) : undefined;
+        if (
+          parsedModel &&
+          (activeModel?.provider !== parsedModel.provider ||
+            activeModel.modelId !== parsedModel.modelId)
+        ) {
           yield* ctx.runtime
             .setModel(parsedModel.provider, parsedModel.modelId)
             .pipe(Effect.mapError((cause) => mapPiError(input.threadId, "set_model", cause)));
@@ -453,12 +492,28 @@ export const makePiAgentAdapter = (
           payload: { model: modelSlug },
         });
 
+        const agentEndSignal = yield* Deferred.make<void, never>();
+        ctx.agentEndSignal = agentEndSignal;
+
         yield* ctx.runtime
           .prompt(promptText)
           .pipe(Effect.mapError((cause) => mapPiError(input.threadId, "prompt", cause)));
-        yield* ctx.runtime
-          .waitForAgentEnd()
-          .pipe(Effect.mapError((cause) => mapPiError(input.threadId, "agent_end", cause)));
+        yield* Deferred.await(agentEndSignal).pipe(
+          Effect.timeoutOption("5 minutes"),
+          Effect.flatMap(
+            Option.match({
+              onNone: () =>
+                Effect.fail(
+                  mapPiError(
+                    input.threadId,
+                    "agent_end",
+                    new Error("Timed out waiting for Pi agent_end"),
+                  ),
+                ),
+              onSome: () => Effect.void,
+            }),
+          ),
+        );
 
         const state = yield* ctx.runtime
           .getState()
@@ -567,7 +622,19 @@ export const makePiAgentAdapter = (
     const stopSession: PiAgentAdapterShape["stopSession"] = (threadId) =>
       Effect.gen(function* () {
         const ctx = yield* requireSession(threadId);
+        if (ctx.stopped) {
+          return;
+        }
         ctx.stopped = true;
+        if (ctx.eventFiber) {
+          yield* Fiber.interrupt(ctx.eventFiber).pipe(Effect.ignore);
+        }
+        yield* ctx.runtime.stop().pipe(Effect.ignore);
+        yield* Ref.update(sessions, (map) => {
+          const next = new Map(map);
+          next.delete(threadId);
+          return next;
+        });
         yield* Scope.close(ctx.scope, Exit.void).pipe(Effect.orDie);
       });
 

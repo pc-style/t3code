@@ -244,11 +244,9 @@ export const makePiRpcSessionRuntime = (input: {
           ),
         );
         if (!response.success) {
-          return yield* Effect.fail(
-            new PiRpcSessionRuntimeError({
-              detail: response.error ?? `Pi RPC command ${command.type} failed`,
-            }),
-          );
+          return yield* new PiRpcSessionRuntimeError({
+            detail: response.error ?? `Pi RPC command ${command.type} failed`,
+          });
         }
         return response;
       });
@@ -259,8 +257,10 @@ export const makePiRpcSessionRuntime = (input: {
         const command = ChildProcess.make(input.spawn.command, args, {
           cwd: input.spawn.cwd,
           env: input.spawn.env ?? process.env,
+          stdin: { stream: "pipe", endOnDone: false },
         });
         const child = yield* input.childProcessSpawner.spawn(command).pipe(
+          Effect.provideService(Scope.Scope, scope),
           Effect.mapError(
             (cause) =>
               new PiRpcSessionRuntimeError({

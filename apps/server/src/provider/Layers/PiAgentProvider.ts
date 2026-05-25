@@ -40,6 +40,12 @@ const BUILTIN_PI_MODELS: ReadonlyArray<ServerProviderModel> = [
     isCustom: false,
     capabilities: DEFAULT_PI_MODEL_CAPABILITIES,
   },
+  {
+    slug: "opencode-go/deepseek-v4-flash",
+    name: "DeepSeek V4 Flash (OpenCode Go)",
+    isCustom: false,
+    capabilities: DEFAULT_PI_MODEL_CAPABILITIES,
+  },
 ];
 
 export function parsePiModelSlug(
