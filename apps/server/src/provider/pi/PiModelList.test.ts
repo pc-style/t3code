@@ -31,6 +31,20 @@ opencode-go  glm-5              202.8K   32.8K    yes       no`);
     ]);
   });
 
+  it("keeps model rows when provider names start with provider", () => {
+    const parsed =
+      parsePiListModelsOutput(`provider     model              context  max-out  thinking  images
+provider-one my-model            1M       384K     yes       no`);
+
+    expect(parsed).toEqual([
+      {
+        provider: "provider-one",
+        modelId: "my-model",
+        slug: "provider-one/my-model",
+      },
+    ]);
+  });
+
   it("deduplicates repeated slugs", () => {
     const parsed = parsePiListModelsOutput(`opencode-go deepseek-v4-flash 1M 384K yes no
 opencode-go deepseek-v4-flash 1M 384K yes no`);

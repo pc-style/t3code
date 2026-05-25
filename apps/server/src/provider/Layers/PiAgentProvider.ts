@@ -203,11 +203,16 @@ export const checkPiAgentProviderStatus = Effect.fn("checkPiAgentProviderStatus"
     ChildProcess.make(binaryPath, ["--list-models"], { env: environment }),
   ).pipe(Effect.timeoutOption(DEFAULT_TIMEOUT_MS), Effect.result);
 
-  const resolvedModels =
+  const listModelsResult =
     Result.isSuccess(listModelsProbe) && Option.isSome(listModelsProbe.success)
+      ? listModelsProbe.success.value
+      : null;
+
+  const resolvedModels =
+    listModelsResult !== null && listModelsResult.code === 0
       ? buildPiProviderModels(
           piAgentSettings,
-          `${listModelsProbe.success.value.stdout}\n${listModelsProbe.success.value.stderr}`,
+          `${listModelsResult.stdout}\n${listModelsResult.stderr}`,
         )
       : models;
 

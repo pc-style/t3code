@@ -15,6 +15,11 @@ export function formatPiModelSlug(provider: string, modelId: string): string {
   return `${provider}/${modelId}`;
 }
 
+function isPiListModelsHeaderLine(line: string): boolean {
+  const match = line.match(/^(\S+)\s+(\S+)/);
+  return match?.[1]?.toLowerCase() === "provider" && match?.[2]?.toLowerCase() === "model";
+}
+
 export function parsePiListModelsOutput(output: string): ReadonlyArray<PiListedModel> {
   const lines = output.split(/\r?\n/);
   const models: PiListedModel[] = [];
@@ -22,7 +27,7 @@ export function parsePiListModelsOutput(output: string): ReadonlyArray<PiListedM
 
   for (const line of lines) {
     const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("provider")) {
+    if (!trimmed || isPiListModelsHeaderLine(trimmed)) {
       continue;
     }
     const match = trimmed.match(/^(\S+)\s+(\S+)/);
