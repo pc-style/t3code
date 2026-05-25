@@ -674,6 +674,8 @@ export const checkPiAgentProviderStatus = Effect.fn("checkPiAgentProviderStatus"
           discoveredModels: scopedModels,
           customModelSlugs: [],
         });
+  const discoveredViaListModels = listModelsResult !== null && listModelsResult.code === 0;
+  const hasScopedModels = scopedModels.length > 0;
   const auth = yield* resolvePiAuthStatus({
     models: resolvedModels,
     environment,
@@ -691,14 +693,19 @@ export const checkPiAgentProviderStatus = Effect.fn("checkPiAgentProviderStatus"
     probe: {
       installed: true,
       version: parsedVersion,
-      status: auth.status === "unauthenticated" ? "warning" : "ready",
+      status: auth.status === "authenticated" ? "ready" : "warning",
       auth,
       message:
         auth.status === "unauthenticated"
           ? "Pi Agent CLI is installed, but no matching provider credential was detected. Set the provider API key or run `/login`."
-          : resolvedModels.length > models.length
-            ? `Pi Agent CLI is installed. Discovered ${resolvedModels.length} models via \`pi --list-models\`.`
-            : "Pi Agent CLI is installed and provider credentials were detected.",
+          : auth.status === "unknown"
+            ? (auth.label ??
+              "Pi Agent CLI is installed, but provider authentication could not be verified.")
+            : discoveredViaListModels && resolvedModels.length > models.length
+              ? `Pi Agent CLI is installed. Discovered ${resolvedModels.length} models via \`pi --list-models\`.`
+              : hasScopedModels && resolvedModels.length > models.length
+                ? `Pi Agent CLI is installed. Loaded ${scopedModels.length} scoped models from Pi settings.`
+                : "Pi Agent CLI is installed and provider credentials were detected.",
     },
   });
 });

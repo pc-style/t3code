@@ -147,7 +147,7 @@ function resolvePiToolMode(input: {
 }): "full" | "read-only" | "off" {
   const selected = piOptionValue(input.modelSelection, "tools");
   if (selected === "full" || selected === "read-only" || selected === "off") return selected;
-  return input.runtimeMode === "full-access" ? "full" : "read-only";
+  return input.runtimeMode === "approval-required" ? "read-only" : "full";
 }
 
 function withPlanModeInstruction(message: string, interactionMode: "default" | "plan" | undefined) {
