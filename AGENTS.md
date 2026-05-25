@@ -65,7 +65,8 @@ Use these as implementation references when designing protocol handling, UX flow
 - `T3CODE_NO_BROWSER=1 bun dev` starts both `apps/server` (port 13773) and `apps/web` (port 5733) via Turborepo.
 - The server emits a **pairing URL** on first start (check stdout for `pairingUrl`). Open it in a browser to authenticate.
 - No external databases or services are required — SQLite is embedded.
-- Provider CLIs (codex, claude, opencode) are optional; the app works without them but shows a warning.
+- **Codex CLI** (`@openai/codex`) is pre-installed globally via `npm install -g @openai/codex`. Run `codex login` to authenticate before using the Codex provider.
+- Other provider CLIs (claude, opencode) are optional; the app works without them but shows a warning.
 
 ### Common commands (see `package.json` scripts)
 
