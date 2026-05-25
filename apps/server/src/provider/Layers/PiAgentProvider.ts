@@ -5,9 +5,13 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import { ChildProcess } from "effect/unstable/process";
+import { homedir } from "node:os";
 
 import { createModelCapabilities } from "@t3tools/shared/model";
 import {
@@ -32,6 +36,92 @@ const PI_SLASH_COMMANDS: ReadonlyArray<ServerProviderSlashCommand> = [
   {
     name: "login",
     description: "Open Pi's provider login flow inside this session.",
+    input: { hint: "provider" },
+  },
+  {
+    name: "logout",
+    description: "Log out of a Pi provider inside this session.",
+    input: { hint: "provider" },
+  },
+  {
+    name: "settings",
+    description: "Open Pi settings.",
+  },
+  {
+    name: "model",
+    description: "Switch the active Pi model.",
+    input: { hint: "provider/model" },
+  },
+  {
+    name: "scoped-models",
+    description: "Configure Pi scoped models.",
+  },
+  {
+    name: "export",
+    description: "Export the current Pi session.",
+  },
+  {
+    name: "import",
+    description: "Import a Pi session.",
+  },
+  {
+    name: "share",
+    description: "Share the current Pi session.",
+  },
+  {
+    name: "copy",
+    description: "Copy the current Pi session.",
+  },
+  {
+    name: "name",
+    description: "Rename the current Pi session.",
+    input: { hint: "name" },
+  },
+  {
+    name: "session",
+    description: "Show Pi session details.",
+  },
+  {
+    name: "changelog",
+    description: "Show the Pi changelog.",
+  },
+  {
+    name: "hotkeys",
+    description: "Show Pi hotkeys.",
+  },
+  {
+    name: "fork",
+    description: "Fork the current Pi session.",
+  },
+  {
+    name: "clone",
+    description: "Clone a Pi session.",
+    input: { hint: "session" },
+  },
+  {
+    name: "tree",
+    description: "Show the Pi session tree.",
+  },
+  {
+    name: "new",
+    description: "Start a new Pi session.",
+  },
+  {
+    name: "compact",
+    description: "Compact the current Pi session context.",
+  },
+  {
+    name: "resume",
+    description: "Resume a Pi session.",
+    input: { hint: "session" },
+  },
+  {
+    name: "reload",
+    description: "Reload the current Pi session.",
+  },
+  {
+    name: "quit",
+    description: "Quit the Pi session.",
   },
 ];
 
@@ -59,18 +149,53 @@ const BUILTIN_PI_MODELS: ReadonlyArray<ServerProviderModel> = [
 ];
 
 const PI_AUTH_ENV_BY_PROVIDER: Record<string, readonly string[]> = {
-  anthropic: ["ANTHROPIC_API_KEY"],
+  anthropic: ["ANTHROPIC_OAUTH_TOKEN", "ANTHROPIC_API_KEY"],
+  "amazon-bedrock": [
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_PROFILE",
+    "AWS_WEB_IDENTITY_TOKEN_FILE",
+    "AWS_BEARER_TOKEN_BEDROCK",
+    "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI",
+    "AWS_CONTAINER_CREDENTIALS_FULL_URI",
+  ],
   azure: ["AZURE_OPENAI_API_KEY", "AZURE_API_KEY"],
   "azure-openai": ["AZURE_OPENAI_API_KEY", "AZURE_API_KEY"],
-  bedrock: ["AWS_ACCESS_KEY_ID", "AWS_PROFILE", "AWS_WEB_IDENTITY_TOKEN_FILE"],
+  "azure-openai-responses": ["AZURE_OPENAI_API_KEY", "AZURE_API_KEY"],
+  bedrock: [
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_PROFILE",
+    "AWS_WEB_IDENTITY_TOKEN_FILE",
+    "AWS_BEARER_TOKEN_BEDROCK",
+    "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI",
+    "AWS_CONTAINER_CREDENTIALS_FULL_URI",
+  ],
   cerebras: ["CEREBRAS_API_KEY"],
+  "cloudflare-ai-gateway": ["CLOUDFLARE_API_KEY", "CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_GATEWAY_ID"],
+  "cloudflare-workers-ai": ["CLOUDFLARE_API_KEY"],
   cohere: ["COHERE_API_KEY"],
   deepseek: ["DEEPSEEK_API_KEY"],
   fireworks: ["FIREWORKS_API_KEY"],
-  "github-copilot": ["GITHUB_TOKEN", "GH_TOKEN"],
+  "github-copilot": ["COPILOT_GITHUB_TOKEN"],
+  "google-vertex": [
+    "GOOGLE_CLOUD_API_KEY",
+    "GOOGLE_APPLICATION_CREDENTIALS",
+    "GOOGLE_CLOUD_PROJECT",
+    "GCLOUD_PROJECT",
+    "GOOGLE_CLOUD_LOCATION",
+  ],
+  huggingface: ["HF_TOKEN"],
+  "kimi-coding": ["KIMI_API_KEY"],
+  minimax: ["MINIMAX_API_KEY"],
+  "minimax-cn": ["MINIMAX_CN_API_KEY"],
+  moonshotai: ["MOONSHOT_API_KEY"],
+  "moonshotai-cn": ["MOONSHOT_API_KEY"],
   openai: ["OPENAI_API_KEY"],
+  "openai-codex": [],
   "openai-compatible": ["OPENAI_API_KEY"],
-  "opencode-go": ["OPENCODE_GO_API_KEY", "OPENCODE_API_KEY"],
+  opencode: ["OPENCODE_API_KEY"],
+  "opencode-go": ["OPENCODE_API_KEY"],
   google: ["GOOGLE_GENERATIVE_AI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"],
   gemini: ["GEMINI_API_KEY", "GOOGLE_GENERATIVE_AI_API_KEY", "GOOGLE_API_KEY"],
   groq: ["GROQ_API_KEY"],
@@ -78,9 +203,23 @@ const PI_AUTH_ENV_BY_PROVIDER: Record<string, readonly string[]> = {
   openrouter: ["OPENROUTER_API_KEY"],
   perplexity: ["PERPLEXITY_API_KEY"],
   together: ["TOGETHER_API_KEY"],
-  vertex: ["GOOGLE_APPLICATION_CREDENTIALS", "GOOGLE_CLOUD_PROJECT"],
+  "vercel-ai-gateway": ["AI_GATEWAY_API_KEY"],
+  vertex: [
+    "GOOGLE_CLOUD_API_KEY",
+    "GOOGLE_APPLICATION_CREDENTIALS",
+    "GOOGLE_CLOUD_PROJECT",
+    "GCLOUD_PROJECT",
+    "GOOGLE_CLOUD_LOCATION",
+  ],
   xai: ["XAI_API_KEY"],
+  xiaomi: ["XIAOMI_API_KEY"],
+  "xiaomi-token-plan-ams": ["XIAOMI_TOKEN_PLAN_AMS_API_KEY"],
+  "xiaomi-token-plan-cn": ["XIAOMI_TOKEN_PLAN_CN_API_KEY"],
+  "xiaomi-token-plan-sgp": ["XIAOMI_TOKEN_PLAN_SGP_API_KEY"],
+  zai: ["ZAI_API_KEY"],
 };
+
+const PI_OAUTH_PROVIDERS = new Set(["anthropic", "github-copilot", "openai-codex"]);
 
 export function parsePiModelSlug(
   slug: string,
@@ -124,25 +263,133 @@ function piAuthEnvNamesForProvider(provider: string): ReadonlyArray<string> {
   if (configured.length > 0) {
     return configured;
   }
+  if (provider in PI_AUTH_ENV_BY_PROVIDER) {
+    return [];
+  }
   const fallback = defaultPiProviderAuthEnv(provider);
   return fallback ? [fallback] : [];
 }
 
-export function resolvePiAuthStatus(input: {
+function resolvePiConfigDir(
+  path: Path.Path,
+  settings?: Pick<PiAgentSettings, "configDir">,
+): string {
+  const configured = settings?.configDir.trim();
+  return configured ? configured : path.join(homedir(), ".pi");
+}
+
+function resolvePiAuthJsonPath(
+  path: Path.Path,
+  settings?: Pick<PiAgentSettings, "configDir">,
+): string {
+  return path.join(resolvePiConfigDir(path, settings), "agent", "auth.json");
+}
+
+const collectProcSelfEnvironment = Effect.fn("collectProcSelfEnvironment")(function* () {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const rawEnvironment = yield* fileSystem
+    .readFileString("/proc/self/environ")
+    .pipe(Effect.orElseSucceed(() => ""));
+  if (!rawEnvironment) {
+    return {};
+  }
+  return Object.fromEntries(
+    rawEnvironment
+      .split("\0")
+      .filter(Boolean)
+      .map((entry) => {
+        const separatorIndex = entry.indexOf("=");
+        return separatorIndex === -1
+          ? [entry, ""]
+          : [entry.slice(0, separatorIndex), entry.slice(separatorIndex + 1)];
+      }),
+  );
+});
+
+function hasProviderCredentialInAuthJson(value: unknown, providers: ReadonlySet<string>): boolean {
+  if (typeof value === "string") {
+    return [...providers].some((provider) => value.includes(provider));
+  }
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  return Object.entries(value).some(([key, nested]) => {
+    if (providers.has(key) && nested !== null && nested !== undefined) {
+      return true;
+    }
+    return (
+      [...providers].some((provider) => key.includes(provider)) ||
+      hasProviderCredentialInAuthJson(nested, providers)
+    );
+  });
+}
+
+const resolvePiAuthJsonStatus = Effect.fn("resolvePiAuthJsonStatus")(function* (input: {
+  readonly providers: ReadonlySet<string>;
+  readonly settings?: Pick<PiAgentSettings, "configDir">;
+  readonly authJsonPath?: string;
+}) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const authJsonPath = input.authJsonPath ?? resolvePiAuthJsonPath(path, input.settings);
+  const exists = yield* fileSystem.exists(authJsonPath).pipe(Effect.orElseSucceed(() => false));
+  if (!exists) {
+    return undefined;
+  }
+  const raw = yield* fileSystem.readFileString(authJsonPath).pipe(
+    Effect.map((contents) => ({ _tag: "Right" as const, contents })),
+    Effect.orElseSucceed(() => ({ _tag: "Left" as const })),
+  );
+  if (raw._tag === "Left") {
+    return {
+      status: "unknown" as const,
+      type: "file",
+      label: `Could not read Pi auth store at ${authJsonPath}`,
+    };
+  }
+  const parsed = Schema.decodeUnknownOption(Schema.UnknownFromJsonString)(raw.contents);
+  if (Option.isNone(parsed)) {
+    return {
+      status: "unknown" as const,
+      type: "file",
+      label: `Could not read Pi auth store at ${authJsonPath}`,
+    };
+  }
+  if (hasProviderCredentialInAuthJson(parsed.value, input.providers)) {
+    return {
+      status: "authenticated" as const,
+      type: "file",
+      label: `Detected Pi credentials in ${authJsonPath}`,
+    };
+  }
+  if ([...input.providers].some((provider) => PI_OAUTH_PROVIDERS.has(provider))) {
+    return {
+      status: "authenticated" as const,
+      type: "file",
+      label: `Detected Pi auth store at ${authJsonPath}`,
+    };
+  }
+  return undefined;
+});
+
+export const resolvePiAuthStatus = Effect.fn("resolvePiAuthStatus")(function* (input: {
   readonly models: ReadonlyArray<ServerProviderModel>;
   readonly environment: NodeJS.ProcessEnv;
+  readonly settings?: Pick<PiAgentSettings, "configDir">;
+  readonly authJsonPath?: string;
+  readonly includeProcSelfEnvironment?: boolean;
 }) {
   const providers = new Set(
     input.models
       .map((model) => parsePiModelSlug(model.slug)?.provider)
       .filter((provider): provider is string => typeof provider === "string"),
   );
+  const environment = input.includeProcSelfEnvironment
+    ? { ...(yield* collectProcSelfEnvironment()), ...input.environment }
+    : input.environment;
   const envNames = [...providers].flatMap(piAuthEnvNamesForProvider);
   const uniqueEnvNames = [...new Set(envNames)];
-  if (uniqueEnvNames.length === 0) {
-    return { status: "unknown" as const };
-  }
-  const presentEnvName = uniqueEnvNames.find((envName) => input.environment[envName]?.trim());
+  const presentEnvName = uniqueEnvNames.find((envName) => environment[envName]?.trim());
   if (presentEnvName) {
     return {
       status: "authenticated" as const,
@@ -150,12 +397,28 @@ export function resolvePiAuthStatus(input: {
       label: `Detected ${presentEnvName}`,
     };
   }
+  const authJsonStatus = yield* resolvePiAuthJsonStatus({
+    providers,
+    ...(input.settings ? { settings: input.settings } : {}),
+    ...(input.authJsonPath ? { authJsonPath: input.authJsonPath } : {}),
+  });
+  if (authJsonStatus) {
+    return authJsonStatus;
+  }
+  if (uniqueEnvNames.length === 0) {
+    return {
+      status: "unknown" as const,
+      label: [...providers].some((provider) => PI_OAUTH_PROVIDERS.has(provider))
+        ? "Run `/login` to authenticate this Pi OAuth provider."
+        : undefined,
+    };
+  }
   return {
     status: "unauthenticated" as const,
     type: "environment",
-    label: `Set one of ${uniqueEnvNames.join(", ")} for the configured Pi models.`,
+    label: `Set one of ${uniqueEnvNames.join(", ")} or run \`/login\` for Pi-managed auth.`,
   };
-}
+});
 
 export const makePendingPiAgentProvider = (
   piAgentSettings: PiAgentSettings,
@@ -309,7 +572,12 @@ export const checkPiAgentProviderStatus = Effect.fn("checkPiAgentProviderStatus"
           `${listModelsResult.stdout}\n${listModelsResult.stderr}`,
         )
       : models;
-  const auth = resolvePiAuthStatus({ models: resolvedModels, environment });
+  const auth = yield* resolvePiAuthStatus({
+    models: resolvedModels,
+    environment,
+    settings: piAgentSettings,
+    includeProcSelfEnvironment: true,
+  });
 
   return buildServerProvider({
     driver: PI_PROVIDER,
@@ -325,7 +593,7 @@ export const checkPiAgentProviderStatus = Effect.fn("checkPiAgentProviderStatus"
       auth,
       message:
         auth.status === "unauthenticated"
-          ? "Pi Agent CLI is installed, but no matching provider credential environment variable was detected."
+          ? "Pi Agent CLI is installed, but no matching provider credential was detected. Set the provider API key or run `/login`."
           : resolvedModels.length > models.length
             ? `Pi Agent CLI is installed. Discovered ${resolvedModels.length} models via \`pi --list-models\`.`
             : "Pi Agent CLI is installed and provider credentials were detected.",
