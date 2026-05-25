@@ -107,6 +107,11 @@ function mapPiError(
   });
 }
 
+function withPiOpenCodeAuthEnv(baseEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const apiKey = baseEnv.OPENCODE_API_KEY?.trim() || baseEnv.OPENCODE_GO_API_KEY?.trim();
+  return apiKey ? { ...baseEnv, OPENCODE_API_KEY: apiKey } : baseEnv;
+}
+
 export const makePiAgentAdapter = (
   piAgentSettings: PiAgentSettings,
   options: PiAgentAdapterLiveOptions = {},
@@ -114,7 +119,7 @@ export const makePiAgentAdapter = (
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const binaryPath = piAgentSettings.binaryPath?.trim() || "pi";
-    const processEnv = options.environment ?? process.env;
+    const processEnv = withPiOpenCodeAuthEnv(options.environment ?? process.env);
     const runtimeEvents = yield* PubSub.unbounded<ProviderRuntimeEvent>();
     const sessions = yield* Ref.make(new Map<ThreadId, PiSessionContext>());
 
