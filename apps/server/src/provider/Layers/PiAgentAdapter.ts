@@ -24,6 +24,7 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Random from "effect/Random";
 import * as Ref from "effect/Ref";
@@ -64,7 +65,7 @@ import {
   type PiRpcImageContent,
   type PiRpcSessionRuntimeShape,
 } from "../pi/PiRpcSessionRuntime.ts";
-import { parsePiModelSlug } from "./PiAgentProvider.ts";
+import { parsePiModelSlug, resolvePiScopedModelPatterns } from "./PiAgentProvider.ts";
 import { type PiAgentAdapterShape } from "../Services/PiAgentAdapter.ts";
 import type { EventNdjsonLogger } from "./EventNdjsonLogger.ts";
 
@@ -159,14 +160,19 @@ export const makePiAgentAdapter = (
 ): Effect.Effect<
   PiAgentAdapterShape,
   never,
-  ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem
+  ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path
 > =>
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
     const binaryPath = piAgentSettings.binaryPath?.trim() || "pi";
     const processEnv = withPiOpenCodeAuthEnv(options.environment ?? process.env);
     const launchArgs = makePiAgentLaunchArgs(piAgentSettings);
+    const scopedModelPatterns = yield* resolvePiScopedModelPatterns(piAgentSettings).pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
+    );
     const runtimeEvents = yield* PubSub.unbounded<ProviderRuntimeEvent>();
     const sessions = yield* Ref.make(new Map<ThreadId, PiSessionContext>());
 
@@ -581,6 +587,7 @@ export const makePiAgentAdapter = (
               : initialToolMode === "read-only"
                 ? ["--tools", "read-only"]
                 : []),
+            ...(scopedModelPatterns.length > 0 ? ["--models", scopedModelPatterns.join(",")] : []),
             ...(initialModel
               ? ["--provider", initialModel.provider, "--model", initialModel.modelId]
               : []),

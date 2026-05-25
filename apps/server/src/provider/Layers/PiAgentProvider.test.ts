@@ -11,6 +11,7 @@ import {
   makePendingPiAgentProvider,
   parsePiModelSlug,
   resolvePiAuthStatus,
+  resolvePiScopedModelPatterns,
 } from "./PiAgentProvider.ts";
 
 const decodePiSettings = Schema.decodeSync(PiAgentSettings);
@@ -289,6 +290,39 @@ describe("resolvePiAuthStatus", () => {
     );
   });
 
+  it("detects Pi auth entries that store the provider inside the credential object", async () => {
+    await runNode(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-pi-auth-" });
+          const authDir = path.join(root, "agent");
+          yield* fileSystem.makeDirectory(authDir, { recursive: true });
+          yield* fileSystem.writeFileString(
+            path.join(authDir, "auth.json"),
+            `{"credentials":[{"provider":"openai-codex","accessToken":"token"}]}`,
+          );
+
+          const status = yield* resolvePiAuthStatus({
+            models: [
+              {
+                slug: "openai-codex/gpt-5-codex",
+                name: "GPT-5 Codex",
+                isCustom: false,
+                capabilities: EMPTY_CAPABILITIES,
+              },
+            ],
+            environment: {},
+            settings: { configDir: root },
+          });
+
+          expect(status).toMatchObject({ status: "authenticated", type: "file" });
+        }),
+      ),
+    );
+  });
+
   it("does not match auth.json provider keys by substring", async () => {
     await runNode(
       Effect.scoped(
@@ -350,6 +384,34 @@ describe("resolvePiAuthStatus", () => {
           });
 
           expect(status).toMatchObject({ status: "unknown" });
+        }),
+      ),
+    );
+  });
+});
+
+describe("resolvePiScopedModelPatterns", () => {
+  it("reads Pi enabledModels from settings.json", async () => {
+    await runNode(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-pi-settings-" });
+          const agentDir = path.join(root, "agent");
+          yield* fileSystem.makeDirectory(agentDir, { recursive: true });
+          yield* fileSystem.writeFileString(
+            path.join(agentDir, "settings.json"),
+            `{"enabledModels":["openai-codex/gpt-5-codex:high","anthropic/*","github-copilot/gpt-5"]}`,
+          );
+
+          const patterns = yield* resolvePiScopedModelPatterns({ configDir: root });
+
+          expect(patterns).toEqual([
+            "openai-codex/gpt-5-codex:high",
+            "anthropic/*",
+            "github-copilot/gpt-5",
+          ]);
         }),
       ),
     );

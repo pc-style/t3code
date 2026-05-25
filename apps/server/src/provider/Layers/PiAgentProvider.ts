@@ -146,6 +146,18 @@ const BUILTIN_PI_MODELS: ReadonlyArray<ServerProviderModel> = [
     isCustom: false,
     capabilities: DEFAULT_PI_MODEL_CAPABILITIES,
   },
+  {
+    slug: "openai-codex/gpt-5-codex",
+    name: "GPT-5 Codex",
+    isCustom: false,
+    capabilities: DEFAULT_PI_MODEL_CAPABILITIES,
+  },
+  {
+    slug: "github-copilot/gpt-5",
+    name: "GPT-5 (GitHub Copilot)",
+    isCustom: false,
+    capabilities: DEFAULT_PI_MODEL_CAPABILITIES,
+  },
 ];
 
 const PI_AUTH_ENV_BY_PROVIDER: Record<string, readonly string[]> = {
@@ -285,6 +297,13 @@ function resolvePiAuthJsonPath(
   return path.join(resolvePiConfigDir(path, settings), "agent", "auth.json");
 }
 
+function resolvePiSettingsJsonPath(
+  path: Path.Path,
+  settings?: Pick<PiAgentSettings, "configDir">,
+): string {
+  return path.join(resolvePiConfigDir(path, settings), "agent", "settings.json");
+}
+
 const collectProcSelfEnvironment = Effect.fn("collectProcSelfEnvironment")(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const rawEnvironment = yield* fileSystem
@@ -317,8 +336,38 @@ function hasProviderCredentialInAuthJson(value: unknown, providers: ReadonlySet<
     if (providers.has(key) && nested !== null && nested !== undefined) {
       return true;
     }
+    if (
+      key === "provider" &&
+      typeof nested === "string" &&
+      providers.has(nested) &&
+      Object.keys(value).some((entryKey) =>
+        [
+          "apiKey",
+          "api_key",
+          "accessToken",
+          "access_token",
+          "refreshToken",
+          "refresh_token",
+        ].includes(entryKey),
+      )
+    ) {
+      return true;
+    }
     return hasProviderCredentialInAuthJson(nested, providers);
   });
+}
+
+function parseJsonObject(contents: string): Option.Option<Record<string, unknown>> {
+  const parsed = Schema.decodeUnknownOption(Schema.UnknownFromJsonString)(contents);
+  if (
+    Option.isNone(parsed) ||
+    !parsed.value ||
+    typeof parsed.value !== "object" ||
+    Array.isArray(parsed.value)
+  ) {
+    return Option.none();
+  }
+  return Option.some(parsed.value as Record<string, unknown>);
 }
 
 const resolvePiAuthJsonStatus = Effect.fn("resolvePiAuthJsonStatus")(function* (input: {
@@ -344,7 +393,7 @@ const resolvePiAuthJsonStatus = Effect.fn("resolvePiAuthJsonStatus")(function* (
       label: `Could not read Pi auth store at ${authJsonPath}`,
     };
   }
-  const parsed = Schema.decodeUnknownOption(Schema.UnknownFromJsonString)(raw.contents);
+  const parsed = parseJsonObject(raw.contents);
   if (Option.isNone(parsed)) {
     return {
       status: "unknown" as const,
@@ -361,6 +410,59 @@ const resolvePiAuthJsonStatus = Effect.fn("resolvePiAuthJsonStatus")(function* (
   }
   return undefined;
 });
+
+export const resolvePiScopedModelPatterns = Effect.fn("resolvePiScopedModelPatterns")(function* (
+  settings?: Pick<PiAgentSettings, "configDir">,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const settingsPath = resolvePiSettingsJsonPath(path, settings);
+  const exists = yield* fileSystem.exists(settingsPath).pipe(Effect.orElseSucceed(() => false));
+  if (!exists) {
+    return [] as ReadonlyArray<string>;
+  }
+  const raw = yield* fileSystem.readFileString(settingsPath).pipe(Effect.orElseSucceed(() => ""));
+  const parsed = parseJsonObject(raw);
+  if (Option.isNone(parsed) || !Array.isArray(parsed.value.enabledModels)) {
+    return [] as ReadonlyArray<string>;
+  }
+  return parsed.value.enabledModels
+    .filter((entry): entry is string => typeof entry === "string")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+});
+
+function piScopedModelPatternToSlug(pattern: string): string | undefined {
+  const scoped = pattern.trim();
+  if (!scoped || /[*?[\]{}]/u.test(scoped)) {
+    return undefined;
+  }
+  const slashIndex = scoped.indexOf("/");
+  if (slashIndex <= 0) {
+    return undefined;
+  }
+  const thinkingSeparator = scoped.indexOf(":", slashIndex + 1);
+  const slug = (thinkingSeparator === -1 ? scoped : scoped.slice(0, thinkingSeparator)).trim();
+  return parsePiModelSlug(slug) ? slug : undefined;
+}
+
+function scopedModelPatternsToServerModels(
+  patterns: ReadonlyArray<string>,
+): ReadonlyArray<ServerProviderModel> {
+  const slugs = [
+    ...new Set(
+      patterns
+        .map(piScopedModelPatternToSlug)
+        .filter((slug): slug is string => typeof slug === "string"),
+    ),
+  ];
+  return slugs.map((slug) => ({
+    slug,
+    name: slug,
+    isCustom: false,
+    capabilities: DEFAULT_PI_MODEL_CAPABILITIES,
+  }));
+}
 
 export const resolvePiAuthStatus = Effect.fn("resolvePiAuthStatus")(function* (input: {
   readonly models: ReadonlyArray<ServerProviderModel>;
@@ -554,14 +656,24 @@ export const checkPiAgentProviderStatus = Effect.fn("checkPiAgentProviderStatus"
     Result.isSuccess(listModelsProbe) && Option.isSome(listModelsProbe.success)
       ? listModelsProbe.success.value
       : null;
+  const scopedModelPatterns = yield* resolvePiScopedModelPatterns(piAgentSettings);
+  const scopedModels = scopedModelPatternsToServerModels(scopedModelPatterns);
 
   const resolvedModels =
     listModelsResult !== null && listModelsResult.code === 0
-      ? buildPiProviderModels(
-          piAgentSettings,
-          `${listModelsResult.stdout}\n${listModelsResult.stderr}`,
-        )
-      : models;
+      ? mergePiProviderModels({
+          builtInModels: buildPiProviderModels(
+            piAgentSettings,
+            `${listModelsResult.stdout}\n${listModelsResult.stderr}`,
+          ),
+          discoveredModels: scopedModels,
+          customModelSlugs: [],
+        })
+      : mergePiProviderModels({
+          builtInModels: models,
+          discoveredModels: scopedModels,
+          customModelSlugs: [],
+        });
   const auth = yield* resolvePiAuthStatus({
     models: resolvedModels,
     environment,
