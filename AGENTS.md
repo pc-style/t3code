@@ -51,3 +51,38 @@ Docs:
 - Codex-Monitor (Tauri, feature-complete, strong reference implementation): https://github.com/Dimillian/CodexMonitor
 
 Use these as implementation references when designing protocol handling, UX flows, and operational safeguards.
+
+## Cursor Cloud specific instructions
+
+### Environment
+
+- **Node.js 24.13.1** via nvm (run `nvm use 24.13.1` if not default).
+- **Bun 1.3.11** at `~/.bun/bin/bun`. Ensure `$BUN_INSTALL/bin` is on PATH.
+- Both are required: Bun is the package manager + SQLite runtime; Node.js runs the server and dev-runner scripts.
+
+### Running the dev environment
+
+- `T3CODE_NO_BROWSER=1 bun dev` starts both `apps/server` (port 13773) and `apps/web` (port 5733) via Turborepo.
+- The server emits a **pairing URL** on first start (check stdout for `pairingUrl`). Open it in a browser to authenticate.
+- No external databases or services are required — SQLite is embedded.
+- **Codex CLI** (`@openai/codex`) is pre-installed globally via npm. Run `codex login` to authenticate (or pipe `OPENAI_API_KEY` via `printf '%s' "$OPENAI_API_KEY" | codex login --with-api-key`).
+- **OpenCode** is pre-installed (`~/.opencode/bin/opencode`). Auth for **OpenCode Go** is handled automatically via the `OPENCODE_GO_API_KEY` secret (written to `~/.local/share/opencode/auth.json` on VM startup).
+- Other provider CLIs (claude) are optional; the app works without them but shows a warning.
+
+### Common commands (see `package.json` scripts)
+
+| Task | Command |
+|------|---------|
+| Install deps | `bun install` |
+| Dev (all) | `bun dev` |
+| Lint | `bun lint` |
+| Format check | `bun fmt:check` |
+| Typecheck | `bun typecheck` |
+| Tests | `bun run test` (NOT `bun test`) |
+
+### Gotchas
+
+- `bun test` invokes the Bun test runner directly; always use `bun run test` which delegates to Vitest via Turbo.
+- The `prepare` script patches TypeScript for `@effect/language-service`. If you delete `node_modules`, re-run `bun install` to re-patch.
+- Typecheck depends on `@t3tools/contracts` being built first (Turbo handles this automatically via task dependencies).
+- The server uses `node-pty` which requires native compilation tools (gcc, make, python3). These are pre-installed in the Cloud VM.
