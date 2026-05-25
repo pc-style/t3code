@@ -125,7 +125,7 @@ function buildTextQuestions(
       id: requestId,
       header: title,
       question,
-      options: [{ label: "Submit", description: "Submit response" }],
+      options: [],
     },
   ];
 }
@@ -271,12 +271,12 @@ export function resolvePiExtensionUiResponse(input: {
     return { value: firstAnswer.trim() };
   }
 
-  if (input.pendingKind === "editor" && input.prefill) {
+  if (input.pendingKind === "editor" && input.prefill && !firstAnswer) {
     return { value: input.prefill };
   }
 
   if (accepted) {
-    return { value: "Submit" };
+    return { cancelled: true };
   }
 
   return { cancelled: true };

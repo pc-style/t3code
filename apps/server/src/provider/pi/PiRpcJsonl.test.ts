@@ -22,4 +22,10 @@ describe("PiRpcJsonl", () => {
     const split = splitPiRpcBuffer('{"type":"abort"}\r\n');
     expect(split.lines).toEqual(['{"type":"abort"}']);
   });
+
+  it("rejects undefined payloads", () => {
+    expect(() => serializePiRpcLine(undefined)).toThrow(
+      "Cannot serialize undefined as a Pi RPC JSONL record",
+    );
+  });
 });

@@ -1,8 +1,4 @@
-import {
-  ProviderDriverKind,
-  type PiAgentSettings,
-  type ServerProviderModel,
-} from "@t3tools/contracts";
+import { type PiAgentSettings, type ServerProviderModel } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -11,15 +7,18 @@ import { ChildProcess } from "effect/unstable/process";
 
 import { createModelCapabilities } from "@t3tools/shared/model";
 import {
+  mergePiProviderModels,
+  parsePiListModelsOutput,
+  piListedModelsToServerModels,
+} from "../pi/PiModelList.ts";
+import {
   buildServerProvider,
   DEFAULT_TIMEOUT_MS,
   parseGenericCliVersion,
-  providerModelsFromSettings,
   spawnAndCollect,
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
 
-const PROVIDER = ProviderDriverKind.make("piAgent");
 const PI_PRESENTATION = {
   displayName: "Pi",
   showInteractionModeToggle: false,
@@ -62,17 +61,26 @@ export function parsePiModelSlug(
   };
 }
 
+function buildPiProviderModels(
+  piAgentSettings: PiAgentSettings,
+  discoveredOutput?: string,
+): ReadonlyArray<ServerProviderModel> {
+  const discoveredModels = discoveredOutput
+    ? piListedModelsToServerModels(parsePiListModelsOutput(discoveredOutput))
+    : [];
+  return mergePiProviderModels({
+    builtInModels: BUILTIN_PI_MODELS,
+    discoveredModels,
+    customModelSlugs: piAgentSettings.customModels,
+  });
+}
+
 export const makePendingPiAgentProvider = (
   piAgentSettings: PiAgentSettings,
 ): Effect.Effect<ServerProviderDraft> =>
   Effect.gen(function* () {
     const checkedAt = yield* Effect.map(DateTime.now, DateTime.formatIso);
-    const models = providerModelsFromSettings(
-      BUILTIN_PI_MODELS,
-      PROVIDER,
-      piAgentSettings.customModels,
-      DEFAULT_PI_MODEL_CAPABILITIES,
-    );
+    const models = buildPiProviderModels(piAgentSettings);
 
     if (!piAgentSettings.enabled) {
       return buildServerProvider({
@@ -110,12 +118,7 @@ export const checkPiAgentProviderStatus = Effect.fn("checkPiAgentProviderStatus"
   environment: NodeJS.ProcessEnv = process.env,
 ) {
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
-  const models = providerModelsFromSettings(
-    BUILTIN_PI_MODELS,
-    PROVIDER,
-    piAgentSettings.customModels,
-    DEFAULT_PI_MODEL_CAPABILITIES,
-  );
+  const models = buildPiProviderModels(piAgentSettings);
 
   if (!piAgentSettings.enabled) {
     return buildServerProvider({
@@ -195,18 +198,33 @@ export const checkPiAgentProviderStatus = Effect.fn("checkPiAgentProviderStatus"
     });
   }
 
+  const listModelsProbe = yield* spawnAndCollect(
+    binaryPath,
+    ChildProcess.make(binaryPath, ["--list-models"], { env: environment }),
+  ).pipe(Effect.timeoutOption(DEFAULT_TIMEOUT_MS), Effect.result);
+
+  const resolvedModels =
+    Result.isSuccess(listModelsProbe) && Option.isSome(listModelsProbe.success)
+      ? buildPiProviderModels(
+          piAgentSettings,
+          `${listModelsProbe.success.value.stdout}\n${listModelsProbe.success.value.stderr}`,
+        )
+      : models;
+
   return buildServerProvider({
     presentation: PI_PRESENTATION,
     enabled: true,
     checkedAt,
-    models,
+    models: resolvedModels,
     probe: {
       installed: true,
       version: parsedVersion,
       status: "ready",
       auth: { status: "unknown" },
       message:
-        "Pi Agent CLI is installed. Authenticate with provider API keys or run `pi /login` in a terminal.",
+        resolvedModels.length > models.length
+          ? `Pi Agent CLI is installed. Discovered ${resolvedModels.length} models via \`pi --list-models\`.`
+          : "Pi Agent CLI is installed. Authenticate with provider API keys or run `pi /login` in a terminal.",
     },
   });
 });

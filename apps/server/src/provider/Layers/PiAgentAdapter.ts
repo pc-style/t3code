@@ -454,6 +454,9 @@ export const makePiAgentAdapter = (
                 lifecycle: "item.completed",
               }),
             );
+            if (messageKey) {
+              ctx.assistantItemIdByMessageKey.delete(messageKey);
+            }
             return;
           }
           case "tool_execution_update": {

@@ -333,19 +333,39 @@ export const makePiRpcSessionRuntime = (input: {
           next.set(id, responseDeferred);
           return next;
         });
-        yield* writeStdinLine(serializePiRpcLine(payload));
-        const response = yield* Effect.race(
-          Deferred.await(responseDeferred),
-          Effect.sleep(Duration.seconds(60)).pipe(
-            Effect.flatMap(() =>
-              Effect.fail(
-                new PiRpcSessionRuntimeError({
-                  detail: `Timeout waiting for Pi RPC response to ${String(command.type)}`,
-                }),
+
+        const removePending = Ref.update(pendingRequests, (pending) => {
+          const next = new Map(pending);
+          next.delete(id);
+          return next;
+        });
+
+        const response = yield* Effect.gen(function* () {
+          yield* writeStdinLine(serializePiRpcLine(payload));
+          return yield* Effect.race(
+            Deferred.await(responseDeferred),
+            Effect.sleep(Duration.seconds(60)).pipe(
+              Effect.flatMap(() =>
+                Effect.fail(
+                  new PiRpcSessionRuntimeError({
+                    detail: `Timeout waiting for Pi RPC response to ${String(command.type)}`,
+                  }),
+                ),
               ),
             ),
+          );
+        }).pipe(
+          Effect.onError(() => removePending),
+          Effect.mapError((cause) =>
+            PiRpcSessionRuntimeError.is(cause)
+              ? cause
+              : new PiRpcSessionRuntimeError({
+                  detail: `Pi RPC command ${String(command.type)} failed`,
+                  cause,
+                }),
           ),
         );
+
         if (!response.success) {
           return yield* new PiRpcSessionRuntimeError({
             detail: response.error ?? `Pi RPC command ${command.type} failed`,

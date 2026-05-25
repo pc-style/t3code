@@ -8,7 +8,14 @@
  */
 
 export function serializePiRpcLine(value: unknown): string {
-  return `${JSON.stringify(value)}\n`;
+  if (value === undefined) {
+    throw new Error("Cannot serialize undefined as a Pi RPC JSONL record");
+  }
+  const serialized = JSON.stringify(value);
+  if (serialized === undefined) {
+    throw new Error("JSON.stringify returned undefined for Pi RPC JSONL record");
+  }
+  return `${serialized}\n`;
 }
 
 export function splitPiRpcBuffer(buffer: string): {
