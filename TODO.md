@@ -11,3 +11,4 @@
 ## Bigger things
 
 - [ ] Queueing messages
+- [ ] Extract shared git-helper text generation plumbing across providers

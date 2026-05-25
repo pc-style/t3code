@@ -232,6 +232,7 @@ const PI_AUTH_ENV_BY_PROVIDER: Record<string, readonly string[]> = {
 };
 
 const PI_OAUTH_PROVIDERS = new Set(["anthropic", "github-copilot", "openai-codex"]);
+const decodeUnknownJsonStringOption = Schema.decodeUnknownOption(Schema.UnknownFromJsonString);
 
 export function parsePiModelSlug(
   slug: string,
@@ -304,27 +305,6 @@ function resolvePiSettingsJsonPath(
   return path.join(resolvePiConfigDir(path, settings), "agent", "settings.json");
 }
 
-const collectProcSelfEnvironment = Effect.fn("collectProcSelfEnvironment")(function* () {
-  const fileSystem = yield* FileSystem.FileSystem;
-  const rawEnvironment = yield* fileSystem
-    .readFileString("/proc/self/environ")
-    .pipe(Effect.orElseSucceed(() => ""));
-  if (!rawEnvironment) {
-    return {};
-  }
-  return Object.fromEntries(
-    rawEnvironment
-      .split("\0")
-      .filter(Boolean)
-      .map((entry) => {
-        const separatorIndex = entry.indexOf("=");
-        return separatorIndex === -1
-          ? [entry, ""]
-          : [entry.slice(0, separatorIndex), entry.slice(separatorIndex + 1)];
-      }),
-  );
-});
-
 function hasProviderCredentialInAuthJson(value: unknown, providers: ReadonlySet<string>): boolean {
   if (!value || typeof value !== "object") {
     return false;
@@ -358,7 +338,7 @@ function hasProviderCredentialInAuthJson(value: unknown, providers: ReadonlySet<
 }
 
 function parseJsonObject(contents: string): Option.Option<Record<string, unknown>> {
-  const parsed = Schema.decodeUnknownOption(Schema.UnknownFromJsonString)(contents);
+  const parsed = decodeUnknownJsonStringOption(contents);
   if (
     Option.isNone(parsed) ||
     !parsed.value ||
@@ -469,19 +449,15 @@ export const resolvePiAuthStatus = Effect.fn("resolvePiAuthStatus")(function* (i
   readonly environment: NodeJS.ProcessEnv;
   readonly settings?: Pick<PiAgentSettings, "configDir">;
   readonly authJsonPath?: string;
-  readonly includeProcSelfEnvironment?: boolean;
 }) {
   const providers = new Set(
     input.models
       .map((model) => parsePiModelSlug(model.slug)?.provider)
       .filter((provider): provider is string => typeof provider === "string"),
   );
-  const environment = input.includeProcSelfEnvironment
-    ? { ...(yield* collectProcSelfEnvironment()), ...input.environment }
-    : input.environment;
   const envNames = [...providers].flatMap(piAuthEnvNamesForProvider);
   const uniqueEnvNames = [...new Set(envNames)];
-  const presentEnvName = uniqueEnvNames.find((envName) => environment[envName]?.trim());
+  const presentEnvName = uniqueEnvNames.find((envName) => input.environment[envName]?.trim());
   if (presentEnvName) {
     return {
       status: "authenticated" as const,
@@ -680,7 +656,6 @@ export const checkPiAgentProviderStatus = Effect.fn("checkPiAgentProviderStatus"
     models: resolvedModels,
     environment,
     settings: piAgentSettings,
-    includeProcSelfEnvironment: true,
   });
 
   return buildServerProvider({

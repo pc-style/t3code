@@ -11,6 +11,14 @@ export type PiThinkingLevel = (typeof PI_THINKING_LEVELS)[number];
 export type PiToolMode = (typeof PI_TOOL_MODES)[number];
 export type PiSteeringMode = (typeof PI_STEERING_MODES)[number];
 
+function makePiOption(
+  value: string,
+  label: string,
+  isDefault: boolean,
+): { readonly id: string; readonly label: string; readonly isDefault?: true } {
+  return Object.assign({ id: value, label }, isDefault ? { isDefault: true as const } : {});
+}
+
 const DEFAULT_CAPABILITIES = createModelCapabilities({
   optionDescriptors: [
     {
@@ -18,11 +26,13 @@ const DEFAULT_CAPABILITIES = createModelCapabilities({
       label: "Thinking",
       type: "select",
       currentValue: "medium",
-      options: PI_THINKING_LEVELS.map((value) => ({
-        id: value,
-        label: value === "xhigh" ? "XHigh" : value.charAt(0).toUpperCase() + value.slice(1),
-        ...(value === "medium" ? { isDefault: true as const } : {}),
-      })),
+      options: PI_THINKING_LEVELS.map((value) =>
+        makePiOption(
+          value,
+          value === "xhigh" ? "XHigh" : value.charAt(0).toUpperCase() + value.slice(1),
+          value === "medium",
+        ),
+      ),
     },
     {
       id: "tools",
@@ -38,11 +48,9 @@ const DEFAULT_CAPABILITIES = createModelCapabilities({
       label: "Streaming input",
       type: "select",
       currentValue: "steer",
-      options: PI_STEERING_MODES.map((value) => ({
-        id: value,
-        label: value === "followUp" ? "Follow-up" : "Steer",
-        ...(value === "steer" ? { isDefault: true as const } : {}),
-      })),
+      options: PI_STEERING_MODES.map((value) =>
+        makePiOption(value, value === "followUp" ? "Follow-up" : "Steer", value === "steer"),
+      ),
     },
   ],
 });
