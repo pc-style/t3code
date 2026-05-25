@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-
 import { createModelCapabilities } from "@t3tools/shared/model";
 
 import {
@@ -8,7 +7,7 @@ import {
   piListedModelsToServerModels,
 } from "./PiModelList.ts";
 
-const DEFAULT_CAPABILITIES = createModelCapabilities({ optionDescriptors: [] });
+const EMPTY_CAPABILITIES = createModelCapabilities({ optionDescriptors: [] });
 
 describe("parsePiListModelsOutput", () => {
   it("parses pi --list-models table rows", () => {
@@ -60,7 +59,7 @@ describe("mergePiProviderModels", () => {
           slug: "anthropic/claude-sonnet-4-6",
           name: "Claude Sonnet 4.6",
           isCustom: false,
-          capabilities: DEFAULT_CAPABILITIES,
+          capabilities: EMPTY_CAPABILITIES,
         },
       ],
       discoveredModels: piListedModelsToServerModels([
@@ -77,6 +76,15 @@ describe("mergePiProviderModels", () => {
       "anthropic/claude-sonnet-4-6",
       "my-proxy/custom-model",
       "opencode-go/deepseek-v4-flash",
+    ]);
+    expect(
+      merged.map((model) =>
+        model.capabilities?.optionDescriptors?.map((descriptor) => descriptor.id),
+      ),
+    ).toEqual([
+      ["thinking", "tools", "steering"],
+      ["thinking", "tools", "steering"],
+      ["thinking", "tools", "steering"],
     ]);
   });
 });

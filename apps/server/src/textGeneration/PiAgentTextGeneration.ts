@@ -8,10 +8,10 @@ import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shar
 import { extractJsonObject } from "@t3tools/shared/schemaJson";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import { ChildProcessSpawner } from "effect/unstable/process";
-import { readFile } from "node:fs/promises";
 
 import { ServerConfig } from "../config.ts";
 import { parsePiModelSlug } from "../provider/Layers/PiAgentProvider.ts";
@@ -69,6 +69,7 @@ export const makePiAgentTextGeneration = Effect.fn("makePiAgentTextGeneration")(
   environment: NodeJS.ProcessEnv = process.env,
 ) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const fileSystem = yield* FileSystem.FileSystem;
   const serverConfig = yield* ServerConfig;
   const binaryPath = piAgentSettings.binaryPath.trim() || "pi";
   const processEnv = makePiAgentEnvironment(piAgentSettings, environment);
@@ -90,15 +91,16 @@ export const makePiAgentTextGeneration = Effect.fn("makePiAgentTextGeneration")(
           attachment,
         });
         if (!attachmentPath) continue;
-        const bytes = yield* Effect.tryPromise({
-          try: () => readFile(attachmentPath),
-          catch: (cause) =>
-            new TextGenerationError({
-              operation,
-              detail: piTextGenerationDetail(cause),
-              cause,
-            }),
-        });
+        const bytes = yield* fileSystem.readFile(attachmentPath).pipe(
+          Effect.mapError(
+            (cause) =>
+              new TextGenerationError({
+                operation,
+                detail: cause.message,
+                cause,
+              }),
+          ),
+        );
         images.push({
           type: "image",
           data: Buffer.from(bytes).toString("base64"),
@@ -149,7 +151,7 @@ export const makePiAgentTextGeneration = Effect.fn("makePiAgentTextGeneration")(
     }).pipe(Effect.provideService(Scope.Scope, scope));
 
     const rawOutput = yield* Effect.gen(function* () {
-      yield* runtime.start();
+      yield* runtime.start().pipe(Effect.provideService(Scope.Scope, scope));
       const images = yield* buildPromptImages(input.operation, input.attachments);
       yield* runtime.prompt({
         message: input.prompt,
@@ -194,30 +196,30 @@ export const makePiAgentTextGeneration = Effect.fn("makePiAgentTextGeneration")(
   });
 
   return {
-    generateCommitMessage: Effect.fn("PiAgentTextGeneration.generateCommitMessage")(function* (
-      input,
-    ) {
-      const { prompt, outputSchema } = buildCommitMessagePrompt({
-        branch: input.branch,
-        stagedSummary: input.stagedSummary,
-        stagedPatch: input.stagedPatch,
-        includeBranch: input.includeBranch === true,
-      });
-      const generated = yield* runPiJson({
-        operation: "generateCommitMessage",
-        cwd: input.cwd,
-        prompt,
-        outputSchemaJson: outputSchema,
-        modelSelection: input.modelSelection,
-      });
-      return {
-        subject: sanitizeCommitSubject(generated.subject),
-        body: generated.body.trim(),
-        ...("branch" in generated && typeof generated.branch === "string"
-          ? { branch: sanitizeFeatureBranchName(generated.branch) }
-          : {}),
-      };
-    }),
+    generateCommitMessage: Effect.fn("PiAgentTextGeneration.generateCommitMessage")(
+      function* (input) {
+        const { prompt, outputSchema } = buildCommitMessagePrompt({
+          branch: input.branch,
+          stagedSummary: input.stagedSummary,
+          stagedPatch: input.stagedPatch,
+          includeBranch: input.includeBranch === true,
+        });
+        const generated = yield* runPiJson({
+          operation: "generateCommitMessage",
+          cwd: input.cwd,
+          prompt,
+          outputSchemaJson: outputSchema,
+          modelSelection: input.modelSelection,
+        });
+        return {
+          subject: sanitizeCommitSubject(generated.subject),
+          body: generated.body.trim(),
+          ...("branch" in generated && typeof generated.branch === "string"
+            ? { branch: sanitizeFeatureBranchName(generated.branch) }
+            : {}),
+        };
+      },
+    ),
     generatePrContent: Effect.fn("PiAgentTextGeneration.generatePrContent")(function* (input) {
       const { prompt, outputSchema } = buildPrContentPrompt({
         baseBranch: input.baseBranch,

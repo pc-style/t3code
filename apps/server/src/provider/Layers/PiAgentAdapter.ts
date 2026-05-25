@@ -734,7 +734,10 @@ export const makePiAgentAdapter = (
             );
         }
 
-        const promptText = withPlanModeInstruction(input.input?.trim() ?? "", input.interactionMode);
+        const promptText = withPlanModeInstruction(
+          input.input?.trim() ?? "",
+          input.interactionMode,
+        );
         const images = yield* buildPromptImages({
           threadId: input.threadId,
           attachments: input.attachments,

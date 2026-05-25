@@ -3,11 +3,7 @@
  *
  * @see https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/rpc.md
  */
-import {
-  PiAgentSettings,
-  ProviderDriverKind,
-  type ServerProvider,
-} from "@t3tools/contracts";
+import { PiAgentSettings, ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -28,10 +24,7 @@ import {
 } from "../Layers/PiAgentProvider.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
-import {
-  type ProviderDriver,
-  type ProviderInstance,
-} from "../ProviderDriver.ts";
+import { type ProviderDriver, type ProviderInstance } from "../ProviderDriver.ts";
 import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import {
@@ -155,7 +148,10 @@ export const PiAgentDriver: ProviderDriver<PiAgentSettings, PiAgentDriverEnv> = 
         enabled,
         snapshot,
         adapter,
-        textGeneration: yield* makePiAgentTextGeneration(effectiveConfig, processEnv),
+        textGeneration: yield* makePiAgentTextGeneration(effectiveConfig, processEnv).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+        ),
       } satisfies ProviderInstance;
     }),
 };

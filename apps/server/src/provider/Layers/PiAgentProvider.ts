@@ -9,6 +9,7 @@ import { createModelCapabilities } from "@t3tools/shared/model";
 import {
   mergePiProviderModels,
   parsePiListModelsOutput,
+  PI_PROVIDER,
   piListedModelsToServerModels,
 } from "../pi/PiModelList.ts";
 import {
@@ -85,7 +86,7 @@ function buildPiProviderModels(
   });
 }
 
-function resolvePiAuthStatus(input: {
+export function resolvePiAuthStatus(input: {
   readonly models: ReadonlyArray<ServerProviderModel>;
   readonly environment: NodeJS.ProcessEnv;
 }) {
@@ -277,8 +278,8 @@ export const checkPiAgentProviderStatus = Effect.fn("checkPiAgentProviderStatus"
         auth.status === "unauthenticated"
           ? "Pi Agent CLI is installed, but no matching provider credential environment variable was detected."
           : resolvedModels.length > models.length
-          ? `Pi Agent CLI is installed. Discovered ${resolvedModels.length} models via \`pi --list-models\`.`
-          : "Pi Agent CLI is installed. Authenticate with provider API keys or run `pi /login` in a terminal.",
+            ? `Pi Agent CLI is installed. Discovered ${resolvedModels.length} models via \`pi --list-models\`.`
+            : "Pi Agent CLI is installed. Authenticate with provider API keys or run `pi /login` in a terminal.",
     },
   });
 });
