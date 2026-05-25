@@ -3,7 +3,49 @@ import { ProviderDriverKind, type ServerProviderModel } from "@t3tools/contracts
 import { createModelCapabilities } from "@t3tools/shared/model";
 
 const PROVIDER = ProviderDriverKind.make("piAgent");
-const DEFAULT_CAPABILITIES = createModelCapabilities({ optionDescriptors: [] });
+export const PI_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
+export const PI_TOOL_MODES = ["full", "read-only", "off"] as const;
+export const PI_STEERING_MODES = ["steer", "followUp"] as const;
+
+export type PiThinkingLevel = (typeof PI_THINKING_LEVELS)[number];
+export type PiToolMode = (typeof PI_TOOL_MODES)[number];
+export type PiSteeringMode = (typeof PI_STEERING_MODES)[number];
+
+const DEFAULT_CAPABILITIES = createModelCapabilities({
+  optionDescriptors: [
+    {
+      id: "thinking",
+      label: "Thinking",
+      type: "select",
+      currentValue: "medium",
+      options: PI_THINKING_LEVELS.map((value) => ({
+        id: value,
+        label: value === "xhigh" ? "XHigh" : value.charAt(0).toUpperCase() + value.slice(1),
+        ...(value === "medium" ? { isDefault: true as const } : {}),
+      })),
+    },
+    {
+      id: "tools",
+      label: "Tools",
+      type: "select",
+      options: PI_TOOL_MODES.map((value) => ({
+        id: value,
+        label: value === "off" ? "Off" : value === "read-only" ? "Read-only" : "Full",
+      })),
+    },
+    {
+      id: "steering",
+      label: "Streaming input",
+      type: "select",
+      currentValue: "steer",
+      options: PI_STEERING_MODES.map((value) => ({
+        id: value,
+        label: value === "followUp" ? "Follow-up" : "Steer",
+        ...(value === "steer" ? { isDefault: true as const } : {}),
+      })),
+    },
+  ],
+});
 
 export interface PiListedModel {
   readonly provider: string;
@@ -58,6 +100,13 @@ export function piListedModelsToServerModels(
   }));
 }
 
+export function withPiModelCapabilities(model: ServerProviderModel): ServerProviderModel {
+  return {
+    ...model,
+    capabilities: DEFAULT_CAPABILITIES,
+  };
+}
+
 export function mergePiProviderModels(input: {
   readonly builtInModels: ReadonlyArray<ServerProviderModel>;
   readonly discoveredModels: ReadonlyArray<ServerProviderModel>;
@@ -66,10 +115,10 @@ export function mergePiProviderModels(input: {
   const merged = new Map<string, ServerProviderModel>();
 
   for (const model of input.builtInModels) {
-    merged.set(model.slug, model);
+    merged.set(model.slug, withPiModelCapabilities(model));
   }
   for (const model of input.discoveredModels) {
-    merged.set(model.slug, model);
+    merged.set(model.slug, withPiModelCapabilities(model));
   }
   for (const rawSlug of input.customModelSlugs) {
     const slug = rawSlug.trim();

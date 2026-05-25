@@ -6,7 +6,6 @@
 import {
   PiAgentSettings,
   ProviderDriverKind,
-  TextGenerationError,
   type ServerProvider,
 } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
@@ -17,7 +16,10 @@ import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { ServerConfig } from "../../config.ts";
-import type { TextGenerationShape } from "../../textGeneration/TextGeneration.ts";
+import {
+  makePiAgentEnvironment,
+  makePiAgentTextGeneration,
+} from "../../textGeneration/PiAgentTextGeneration.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makePiAgentAdapter } from "../Layers/PiAgentAdapter.ts";
 import {
@@ -27,7 +29,6 @@ import {
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import {
-  defaultProviderContinuationIdentity,
   type ProviderDriver,
   type ProviderInstance,
 } from "../ProviderDriver.ts";
@@ -42,29 +43,6 @@ const decodePiAgentSettings = Schema.decodeSync(PiAgentSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("piAgent");
 const SNAPSHOT_REFRESH_INTERVAL = Duration.minutes(5);
-
-const makeUnavailablePiTextGeneration = (): TextGenerationShape => {
-  const fail = (
-    operation:
-      | "generateCommitMessage"
-      | "generatePrContent"
-      | "generateBranchName"
-      | "generateThreadTitle",
-  ) =>
-    Effect.fail(
-      new TextGenerationError({
-        operation,
-        detail:
-          "Pi Agent text generation is not implemented. Use Codex or OpenCode for git helpers.",
-      }),
-    );
-  return {
-    generateCommitMessage: () => fail("generateCommitMessage"),
-    generatePrContent: () => fail("generatePrContent"),
-    generateBranchName: () => fail("generateBranchName"),
-    generateThreadTitle: () => fail("generateThreadTitle"),
-  };
-};
 
 const UPDATE = makePackageManagedProviderMaintenanceResolver({
   provider: DRIVER_KIND,
@@ -109,18 +87,25 @@ export const PiAgentDriver: ProviderDriver<PiAgentSettings, PiAgentDriverEnv> = 
       const fileSystem = yield* FileSystem.FileSystem;
       const eventLoggers = yield* ProviderEventLoggers;
       const serverConfig = yield* ServerConfig;
-      const processEnv = mergeProviderInstanceEnvironment(environment);
-      const continuationIdentity = defaultProviderContinuationIdentity({
+      const effectiveConfig = { ...config, enabled } satisfies PiAgentSettings;
+      const processEnv = makePiAgentEnvironment(
+        effectiveConfig,
+        mergeProviderInstanceEnvironment(environment),
+      );
+      const identitySuffix =
+        effectiveConfig.sessionDir.trim() || effectiveConfig.configDir.trim() || undefined;
+      const continuationIdentity = {
         driverKind: DRIVER_KIND,
-        instanceId,
-      });
+        continuationKey: `piAgent:instance:${instanceId}${
+          identitySuffix ? `:state:${identitySuffix}` : ""
+        }`,
+      };
       const stampIdentity = withInstanceIdentity({
         instanceId,
         displayName,
         accentColor,
         continuationGroupKey: continuationIdentity.continuationKey,
       });
-      const effectiveConfig = { ...config, enabled } satisfies PiAgentSettings;
       const maintenanceCapabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
         binaryPath: effectiveConfig.binaryPath,
         env: processEnv,
@@ -170,7 +155,7 @@ export const PiAgentDriver: ProviderDriver<PiAgentSettings, PiAgentDriverEnv> = 
         enabled,
         snapshot,
         adapter,
-        textGeneration: makeUnavailablePiTextGeneration(),
+        textGeneration: yield* makePiAgentTextGeneration(effectiveConfig, processEnv),
       } satisfies ProviderInstance;
     }),
 };

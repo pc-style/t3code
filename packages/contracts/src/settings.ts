@@ -347,13 +347,46 @@ export const PiAgentSettings = makeProviderSettingsSchema(
         },
       }),
     ),
+    configDir: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "PI_CODING_AGENT_DIR path",
+        description: "Custom Pi config directory for this instance.",
+        providerSettingsForm: {
+          placeholder: "~/.pi",
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
+    sessionDir: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Session directory",
+        description: "Custom Pi session directory for this instance.",
+        providerSettingsForm: {
+          placeholder: "~/.pi/sessions",
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
+    launchArgs: Schema.String.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Launch arguments",
+        description: "Additional CLI arguments passed on session start.",
+        providerSettingsForm: {
+          placeholder: "e.g. --some-flag",
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
     customModels: Schema.Array(Schema.String).pipe(
       Schema.withDecodingDefault(Effect.succeed([])),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
   },
   {
-    order: ["binaryPath"],
+    order: ["binaryPath", "configDir", "sessionDir", "launchArgs"],
   },
 );
 export type PiAgentSettings = typeof PiAgentSettings.Type;
@@ -476,6 +509,9 @@ const OpenCodeSettingsPatch = Schema.Struct({
 const PiAgentSettingsPatch = Schema.Struct({
   enabled: Schema.optionalKey(Schema.Boolean),
   binaryPath: Schema.optionalKey(TrimmedString),
+  configDir: Schema.optionalKey(TrimmedString),
+  sessionDir: Schema.optionalKey(TrimmedString),
+  launchArgs: Schema.optionalKey(TrimmedString),
   customModels: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 

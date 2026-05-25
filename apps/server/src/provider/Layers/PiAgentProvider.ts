@@ -21,7 +21,7 @@ import {
 
 const PI_PRESENTATION = {
   displayName: "Pi",
-  showInteractionModeToggle: false,
+  showInteractionModeToggle: true,
 } as const;
 
 const DEFAULT_PI_MODEL_CAPABILITIES = createModelCapabilities({ optionDescriptors: [] });
@@ -46,6 +46,16 @@ const BUILTIN_PI_MODELS: ReadonlyArray<ServerProviderModel> = [
     capabilities: DEFAULT_PI_MODEL_CAPABILITIES,
   },
 ];
+
+const PI_AUTH_ENV_BY_PROVIDER: Record<string, readonly string[]> = {
+  anthropic: ["ANTHROPIC_API_KEY"],
+  openai: ["OPENAI_API_KEY"],
+  "opencode-go": ["OPENCODE_GO_API_KEY", "OPENCODE_API_KEY"],
+  google: ["GOOGLE_GENERATIVE_AI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"],
+  gemini: ["GEMINI_API_KEY", "GOOGLE_GENERATIVE_AI_API_KEY", "GOOGLE_API_KEY"],
+  groq: ["GROQ_API_KEY"],
+  openrouter: ["OPENROUTER_API_KEY"],
+};
 
 export function parsePiModelSlug(
   slug: string,
@@ -75,6 +85,35 @@ function buildPiProviderModels(
   });
 }
 
+function resolvePiAuthStatus(input: {
+  readonly models: ReadonlyArray<ServerProviderModel>;
+  readonly environment: NodeJS.ProcessEnv;
+}) {
+  const providers = new Set(
+    input.models
+      .map((model) => parsePiModelSlug(model.slug)?.provider)
+      .filter((provider): provider is string => typeof provider === "string"),
+  );
+  const envNames = [...providers].flatMap((provider) => PI_AUTH_ENV_BY_PROVIDER[provider] ?? []);
+  const uniqueEnvNames = [...new Set(envNames)];
+  if (uniqueEnvNames.length === 0) {
+    return { status: "unknown" as const };
+  }
+  const presentEnvName = uniqueEnvNames.find((envName) => input.environment[envName]?.trim());
+  if (presentEnvName) {
+    return {
+      status: "authenticated" as const,
+      type: "environment",
+      label: `Detected ${presentEnvName}`,
+    };
+  }
+  return {
+    status: "unauthenticated" as const,
+    type: "environment",
+    label: `Set one of ${uniqueEnvNames.join(", ")} for the configured Pi models.`,
+  };
+}
+
 export const makePendingPiAgentProvider = (
   piAgentSettings: PiAgentSettings,
 ): Effect.Effect<ServerProviderDraft> =>
@@ -84,6 +123,7 @@ export const makePendingPiAgentProvider = (
 
     if (!piAgentSettings.enabled) {
       return buildServerProvider({
+        driver: PI_PROVIDER,
         presentation: PI_PRESENTATION,
         enabled: false,
         checkedAt,
@@ -99,6 +139,7 @@ export const makePendingPiAgentProvider = (
     }
 
     return buildServerProvider({
+      driver: PI_PROVIDER,
       presentation: PI_PRESENTATION,
       enabled: true,
       checkedAt,
@@ -122,6 +163,7 @@ export const checkPiAgentProviderStatus = Effect.fn("checkPiAgentProviderStatus"
 
   if (!piAgentSettings.enabled) {
     return buildServerProvider({
+      driver: PI_PROVIDER,
       presentation: PI_PRESENTATION,
       enabled: false,
       checkedAt,
@@ -150,6 +192,7 @@ export const checkPiAgentProviderStatus = Effect.fn("checkPiAgentProviderStatus"
         ? "Pi Agent CLI (`pi`) is not installed or not on PATH. Install with `npm install -g @earendil-works/pi-coding-agent` or https://pi.dev/install.sh."
         : `Failed to execute Pi Agent CLI health check: ${error.message}`;
     return buildServerProvider({
+      driver: PI_PROVIDER,
       presentation: PI_PRESENTATION,
       enabled: true,
       checkedAt,
@@ -166,6 +209,7 @@ export const checkPiAgentProviderStatus = Effect.fn("checkPiAgentProviderStatus"
 
   if (Option.isNone(versionProbe.success)) {
     return buildServerProvider({
+      driver: PI_PROVIDER,
       presentation: PI_PRESENTATION,
       enabled: true,
       checkedAt,
@@ -184,6 +228,7 @@ export const checkPiAgentProviderStatus = Effect.fn("checkPiAgentProviderStatus"
   const parsedVersion = parseGenericCliVersion(`${versionResult.stdout}\n${versionResult.stderr}`);
   if (versionResult.code !== 0) {
     return buildServerProvider({
+      driver: PI_PROVIDER,
       presentation: PI_PRESENTATION,
       enabled: true,
       checkedAt,
@@ -215,8 +260,10 @@ export const checkPiAgentProviderStatus = Effect.fn("checkPiAgentProviderStatus"
           `${listModelsResult.stdout}\n${listModelsResult.stderr}`,
         )
       : models;
+  const auth = resolvePiAuthStatus({ models: resolvedModels, environment });
 
   return buildServerProvider({
+    driver: PI_PROVIDER,
     presentation: PI_PRESENTATION,
     enabled: true,
     checkedAt,
@@ -224,10 +271,12 @@ export const checkPiAgentProviderStatus = Effect.fn("checkPiAgentProviderStatus"
     probe: {
       installed: true,
       version: parsedVersion,
-      status: "ready",
-      auth: { status: "unknown" },
+      status: auth.status === "unauthenticated" ? "warning" : "ready",
+      auth,
       message:
-        resolvedModels.length > models.length
+        auth.status === "unauthenticated"
+          ? "Pi Agent CLI is installed, but no matching provider credential environment variable was detected."
+          : resolvedModels.length > models.length
           ? `Pi Agent CLI is installed. Discovered ${resolvedModels.length} models via \`pi --list-models\`.`
           : "Pi Agent CLI is installed. Authenticate with provider API keys or run `pi /login` in a terminal.",
     },
