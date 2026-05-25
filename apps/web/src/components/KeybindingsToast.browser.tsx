@@ -133,6 +133,9 @@ function createBaseServerConfig(): ServerConfig {
         piAgent: {
           enabled: false,
           binaryPath: "",
+          configDir: "",
+          sessionDir: "",
+          launchArgs: "",
           customModels: [],
         },
       },

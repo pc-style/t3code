@@ -16,6 +16,7 @@ import {
   type ThreadId,
   TurnId,
 } from "@t3tools/contracts";
+import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -23,6 +24,7 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Random from "effect/Random";
 import * as Ref from "effect/Ref";
@@ -31,6 +33,7 @@ import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
+import { makePiAgentLaunchArgs } from "../../textGeneration/PiAgentTextGeneration.ts";
 
 import {
   ProviderAdapterProcessError,
@@ -62,12 +65,14 @@ import {
   type PiRpcImageContent,
   type PiRpcSessionRuntimeShape,
 } from "../pi/PiRpcSessionRuntime.ts";
-import { parsePiModelSlug } from "./PiAgentProvider.ts";
+import { parsePiModelSlug, resolvePiScopedModelPatterns } from "./PiAgentProvider.ts";
 import { type PiAgentAdapterShape } from "../Services/PiAgentAdapter.ts";
 import type { EventNdjsonLogger } from "./EventNdjsonLogger.ts";
 
 const PROVIDER = ProviderDriverKind.make("piAgent");
 const PI_RESUME_VERSION = 1 as const;
+const PI_PLAN_MODE_INSTRUCTION =
+  "Plan mode: respond with a concise implementation plan only. Do not modify files, run tools, or make changes until the user asks to implement.";
 
 export interface PiAgentAdapterLiveOptions {
   readonly environment?: NodeJS.ProcessEnv;
@@ -129,19 +134,45 @@ function withPiOpenCodeAuthEnv(baseEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return apiKey ? { ...baseEnv, OPENCODE_API_KEY: apiKey } : baseEnv;
 }
 
+function piOptionValue(
+  modelSelection: ProviderSendTurnInput["modelSelection"],
+  id: string,
+): string | undefined {
+  return modelSelection ? getModelSelectionStringOptionValue(modelSelection, id) : undefined;
+}
+
+function resolvePiToolMode(input: {
+  readonly runtimeMode: "approval-required" | "auto-accept-edits" | "full-access";
+  readonly modelSelection: ProviderSendTurnInput["modelSelection"];
+}): "full" | "read-only" | "off" {
+  const selected = piOptionValue(input.modelSelection, "tools");
+  if (selected === "full" || selected === "read-only" || selected === "off") return selected;
+  return input.runtimeMode === "approval-required" ? "read-only" : "full";
+}
+
+function withPlanModeInstruction(message: string, interactionMode: "default" | "plan" | undefined) {
+  return interactionMode === "plan" ? `${PI_PLAN_MODE_INSTRUCTION}\n\n${message}` : message;
+}
+
 export const makePiAgentAdapter = (
   piAgentSettings: PiAgentSettings,
   options: PiAgentAdapterLiveOptions = {},
 ): Effect.Effect<
   PiAgentAdapterShape,
   never,
-  ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem
+  ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path
 > =>
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
     const binaryPath = piAgentSettings.binaryPath?.trim() || "pi";
     const processEnv = withPiOpenCodeAuthEnv(options.environment ?? process.env);
+    const launchArgs = makePiAgentLaunchArgs(piAgentSettings);
+    const scopedModelPatterns = yield* resolvePiScopedModelPatterns(piAgentSettings).pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
+    );
     const runtimeEvents = yield* PubSub.unbounded<ProviderRuntimeEvent>();
     const sessions = yield* Ref.make(new Map<ThreadId, PiSessionContext>());
 
@@ -541,9 +572,22 @@ export const makePiAgentAdapter = (
           const initialModel = input.modelSelection?.model
             ? parsePiModelSlug(input.modelSelection.model)
             : undefined;
+          const initialThinking = piOptionValue(input.modelSelection, "thinking") ?? "medium";
+          const initialToolMode = resolvePiToolMode({
+            runtimeMode: input.runtimeMode,
+            modelSelection: input.modelSelection,
+          });
           const spawnExtraArgs = [
+            ...launchArgs,
             "--no-session",
-            ...(input.runtimeMode === "full-access" ? [] : ["--no-tools"]),
+            "--thinking",
+            initialThinking,
+            ...(initialToolMode === "off"
+              ? ["--no-tools"]
+              : initialToolMode === "read-only"
+                ? ["--tools", "read-only"]
+                : []),
+            ...(scopedModelPatterns.length > 0 ? ["--models", scopedModelPatterns.join(",")] : []),
             ...(initialModel
               ? ["--provider", initialModel.provider, "--model", initialModel.modelId]
               : []),
@@ -688,23 +732,33 @@ export const makePiAgentAdapter = (
             .setModel(parsedModel.provider, parsedModel.modelId)
             .pipe(Effect.mapError((cause) => mapPiError(input.threadId, "set_model", cause)));
         }
+        const selectedThinking = piOptionValue(input.modelSelection, "thinking");
+        if (selectedThinking) {
+          yield* ctx.runtime
+            .setThinkingLevel(selectedThinking)
+            .pipe(
+              Effect.mapError((cause) => mapPiError(input.threadId, "set_thinking_level", cause)),
+            );
+        }
 
-        const promptText = input.input?.trim() ?? "";
+        const userText = input.input?.trim() ?? "";
         const images = yield* buildPromptImages({
           threadId: input.threadId,
           attachments: input.attachments,
         });
-        if (!promptText && images.length === 0) {
+        if (!userText && images.length === 0) {
           return yield* new ProviderAdapterValidationError({
             provider: PROVIDER,
             operation: "sendTurn",
             issue: "Turn requires non-empty text or attachments.",
           });
         }
+        const promptText = withPlanModeInstruction(userText, input.interactionMode);
 
         const streamingState = yield* ctx.runtime
           .getState()
           .pipe(Effect.mapError((cause) => mapPiError(input.threadId, "get_state", cause)));
+        const steering = piOptionValue(input.modelSelection, "steering");
 
         ctx.activeTurnId = turnId;
         ctx.session = {
@@ -730,7 +784,9 @@ export const makePiAgentAdapter = (
           .prompt({
             message: promptText || "See attached image(s).",
             ...(images.length > 0 ? { images } : {}),
-            ...(streamingState.isStreaming ? { streamingBehavior: "steer" as const } : {}),
+            ...(streamingState.isStreaming
+              ? { streamingBehavior: steering === "followUp" ? ("followUp" as const) : "steer" }
+              : {}),
           })
           .pipe(Effect.mapError((cause) => mapPiError(input.threadId, "prompt", cause)));
         yield* Deferred.await(agentEndSignal).pipe(

@@ -3,21 +3,20 @@
  *
  * @see https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/rpc.md
  */
-import {
-  PiAgentSettings,
-  ProviderDriverKind,
-  TextGenerationError,
-  type ServerProvider,
-} from "@t3tools/contracts";
+import { PiAgentSettings, ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { ServerConfig } from "../../config.ts";
-import type { TextGenerationShape } from "../../textGeneration/TextGeneration.ts";
+import {
+  makePiAgentEnvironment,
+  makePiAgentTextGeneration,
+} from "../../textGeneration/PiAgentTextGeneration.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makePiAgentAdapter } from "../Layers/PiAgentAdapter.ts";
 import {
@@ -26,11 +25,7 @@ import {
 } from "../Layers/PiAgentProvider.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
-import {
-  defaultProviderContinuationIdentity,
-  type ProviderDriver,
-  type ProviderInstance,
-} from "../ProviderDriver.ts";
+import { type ProviderDriver, type ProviderInstance } from "../ProviderDriver.ts";
 import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import {
@@ -43,29 +38,6 @@ const decodePiAgentSettings = Schema.decodeSync(PiAgentSettings);
 const DRIVER_KIND = ProviderDriverKind.make("piAgent");
 const SNAPSHOT_REFRESH_INTERVAL = Duration.minutes(5);
 
-const makeUnavailablePiTextGeneration = (): TextGenerationShape => {
-  const fail = (
-    operation:
-      | "generateCommitMessage"
-      | "generatePrContent"
-      | "generateBranchName"
-      | "generateThreadTitle",
-  ) =>
-    Effect.fail(
-      new TextGenerationError({
-        operation,
-        detail:
-          "Pi Agent text generation is not implemented. Use Codex or OpenCode for git helpers.",
-      }),
-    );
-  return {
-    generateCommitMessage: () => fail("generateCommitMessage"),
-    generatePrContent: () => fail("generatePrContent"),
-    generateBranchName: () => fail("generateBranchName"),
-    generateThreadTitle: () => fail("generateThreadTitle"),
-  };
-};
-
 const UPDATE = makePackageManagedProviderMaintenanceResolver({
   provider: DRIVER_KIND,
   npmPackageName: "@earendil-works/pi-coding-agent",
@@ -73,9 +45,24 @@ const UPDATE = makePackageManagedProviderMaintenanceResolver({
   nativeUpdate: null,
 });
 
+export function buildPiContinuationGroupKey(input: {
+  readonly instanceId: ProviderInstance["instanceId"];
+  readonly configDir: string;
+  readonly sessionDir: string;
+}): string {
+  const identityStateParts = [
+    input.configDir.trim() ? `config:${input.configDir.trim()}` : null,
+    input.sessionDir.trim() ? `session:${input.sessionDir.trim()}` : null,
+  ].filter((part): part is string => part !== null);
+  const identitySuffix =
+    identityStateParts.length > 0 ? encodeURIComponent(identityStateParts.join("|")) : undefined;
+  return `piAgent:instance:${input.instanceId}${identitySuffix ? `:state:${identitySuffix}` : ""}`;
+}
+
 export type PiAgentDriverEnv =
   | ChildProcessSpawner.ChildProcessSpawner
   | FileSystem.FileSystem
+  | Path.Path
   | ProviderEventLoggers
   | ServerConfig;
 
@@ -107,20 +94,28 @@ export const PiAgentDriver: ProviderDriver<PiAgentSettings, PiAgentDriverEnv> = 
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       const eventLoggers = yield* ProviderEventLoggers;
       const serverConfig = yield* ServerConfig;
-      const processEnv = mergeProviderInstanceEnvironment(environment);
-      const continuationIdentity = defaultProviderContinuationIdentity({
+      const effectiveConfig = { ...config, enabled } satisfies PiAgentSettings;
+      const processEnv = makePiAgentEnvironment(
+        effectiveConfig,
+        mergeProviderInstanceEnvironment(environment),
+      );
+      const continuationIdentity = {
         driverKind: DRIVER_KIND,
-        instanceId,
-      });
+        continuationKey: buildPiContinuationGroupKey({
+          instanceId,
+          configDir: effectiveConfig.configDir,
+          sessionDir: effectiveConfig.sessionDir,
+        }),
+      };
       const stampIdentity = withInstanceIdentity({
         instanceId,
         displayName,
         accentColor,
         continuationGroupKey: continuationIdentity.continuationKey,
       });
-      const effectiveConfig = { ...config, enabled } satisfies PiAgentSettings;
       const maintenanceCapabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
         binaryPath: effectiveConfig.binaryPath,
         env: processEnv,
@@ -133,11 +128,14 @@ export const PiAgentDriver: ProviderDriver<PiAgentSettings, PiAgentDriverEnv> = 
       }).pipe(
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
       );
 
       const checkProvider = checkPiAgentProviderStatus(effectiveConfig, processEnv).pipe(
         Effect.map(stampIdentity),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
       );
 
       const snapshot = yield* makeManagedServerProvider<PiAgentSettings>({
@@ -170,7 +168,10 @@ export const PiAgentDriver: ProviderDriver<PiAgentSettings, PiAgentDriverEnv> = 
         enabled,
         snapshot,
         adapter,
-        textGeneration: makeUnavailablePiTextGeneration(),
+        textGeneration: yield* makePiAgentTextGeneration(effectiveConfig, processEnv).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+        ),
       } satisfies ProviderInstance;
     }),
 };
