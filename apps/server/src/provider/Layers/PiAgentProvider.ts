@@ -307,20 +307,17 @@ const collectProcSelfEnvironment = Effect.fn("collectProcSelfEnvironment")(funct
 });
 
 function hasProviderCredentialInAuthJson(value: unknown, providers: ReadonlySet<string>): boolean {
-  if (typeof value === "string") {
-    return [...providers].some((provider) => value.includes(provider));
-  }
   if (!value || typeof value !== "object") {
     return false;
+  }
+  if (Array.isArray(value)) {
+    return value.some((nested) => hasProviderCredentialInAuthJson(nested, providers));
   }
   return Object.entries(value).some(([key, nested]) => {
     if (providers.has(key) && nested !== null && nested !== undefined) {
       return true;
     }
-    return (
-      [...providers].some((provider) => key.includes(provider)) ||
-      hasProviderCredentialInAuthJson(nested, providers)
-    );
+    return hasProviderCredentialInAuthJson(nested, providers);
   });
 }
 
@@ -360,13 +357,6 @@ const resolvePiAuthJsonStatus = Effect.fn("resolvePiAuthJsonStatus")(function* (
       status: "authenticated" as const,
       type: "file",
       label: `Detected Pi credentials in ${authJsonPath}`,
-    };
-  }
-  if ([...input.providers].some((provider) => PI_OAUTH_PROVIDERS.has(provider))) {
-    return {
-      status: "authenticated" as const,
-      type: "file",
-      label: `Detected Pi auth store at ${authJsonPath}`,
     };
   }
   return undefined;

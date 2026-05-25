@@ -288,4 +288,70 @@ describe("resolvePiAuthStatus", () => {
       ),
     );
   });
+
+  it("does not match auth.json provider keys by substring", async () => {
+    await runNode(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-pi-auth-" });
+          const authDir = path.join(root, "agent");
+          yield* fileSystem.makeDirectory(authDir, { recursive: true });
+          yield* fileSystem.writeFileString(
+            path.join(authDir, "auth.json"),
+            `{"openai-codex":{"type":"oauth","accessToken":"token"}}`,
+          );
+
+          const status = yield* resolvePiAuthStatus({
+            models: [
+              {
+                slug: "openai/gpt-5.4",
+                name: "GPT-5.4",
+                isCustom: false,
+                capabilities: EMPTY_CAPABILITIES,
+              },
+            ],
+            environment: {},
+            settings: { configDir: root },
+          });
+
+          expect(status).toMatchObject({ status: "unauthenticated" });
+        }),
+      ),
+    );
+  });
+
+  it("does not treat unrelated auth.json entries as OAuth authentication", async () => {
+    await runNode(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-pi-auth-" });
+          const authDir = path.join(root, "agent");
+          yield* fileSystem.makeDirectory(authDir, { recursive: true });
+          yield* fileSystem.writeFileString(
+            path.join(authDir, "auth.json"),
+            `{"anthropic":{"type":"oauth","accessToken":"token"}}`,
+          );
+
+          const status = yield* resolvePiAuthStatus({
+            models: [
+              {
+                slug: "openai-codex/gpt-5-codex",
+                name: "GPT-5 Codex",
+                isCustom: false,
+                capabilities: EMPTY_CAPABILITIES,
+              },
+            ],
+            environment: {},
+            settings: { configDir: root },
+          });
+
+          expect(status).toMatchObject({ status: "unknown" });
+        }),
+      ),
+    );
+  });
 });
