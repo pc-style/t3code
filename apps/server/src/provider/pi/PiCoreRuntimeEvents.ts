@@ -4,9 +4,11 @@ import {
   type ProviderRuntimeEvent,
   RuntimeItemId,
   type RuntimeRequestId,
+  RuntimeTaskId,
   type ThreadId,
   type ToolLifecycleItemType,
   type TurnId,
+  type CanonicalRequestType,
 } from "@t3tools/contracts";
 
 export const PI_RPC_RAW_SOURCE = "pi.rpc.event" as const;
@@ -128,6 +130,7 @@ export function makePiExtensionUiRequestEvent(input: {
   readonly threadId: ThreadId;
   readonly turnId: TurnId | undefined;
   readonly requestId: RuntimeRequestId;
+  readonly requestType: CanonicalRequestType;
   readonly title: string;
   readonly detail?: string;
   readonly rawPayload: unknown;
@@ -140,13 +143,154 @@ export function makePiExtensionUiRequestEvent(input: {
     turnId: input.turnId,
     requestId: input.requestId,
     payload: {
-      requestType: "unknown",
+      requestType: input.requestType,
       detail: input.detail ?? input.title,
       args: input.rawPayload,
     },
     raw: {
       source: PI_RPC_RAW_SOURCE,
       payload: input.rawPayload,
+    },
+  };
+}
+
+export function makePiToolProgressEvent(input: {
+  readonly stamp: PiEventStamp;
+  readonly provider: ProviderDriverKind;
+  readonly threadId: ThreadId;
+  readonly turnId: TurnId | undefined;
+  readonly toolCallId: string;
+  readonly summary: string;
+  readonly rawPayload: unknown;
+}): ProviderRuntimeEvent {
+  return {
+    type: "tool.progress",
+    ...input.stamp,
+    provider: input.provider,
+    threadId: input.threadId,
+    turnId: input.turnId,
+    itemId: RuntimeItemId.make(input.toolCallId),
+    payload: {
+      summary: input.summary,
+    },
+    raw: {
+      source: PI_RPC_RAW_SOURCE,
+      payload: input.rawPayload,
+    },
+  };
+}
+
+export function makePiTaskProgressEvent(input: {
+  readonly stamp: PiEventStamp;
+  readonly provider: ProviderDriverKind;
+  readonly threadId: ThreadId;
+  readonly turnId: TurnId | undefined;
+  readonly taskId: string;
+  readonly summary: string;
+  readonly rawPayload: unknown;
+}): ProviderRuntimeEvent {
+  return {
+    type: "task.progress",
+    ...input.stamp,
+    provider: input.provider,
+    threadId: input.threadId,
+    turnId: input.turnId,
+    payload: {
+      taskId: RuntimeTaskId.make(input.taskId),
+      description: input.summary,
+      summary: input.summary,
+    },
+    raw: {
+      source: PI_RPC_RAW_SOURCE,
+      payload: input.rawPayload,
+    },
+  };
+}
+
+export function makePiRuntimeWarningEvent(input: {
+  readonly stamp: PiEventStamp;
+  readonly provider: ProviderDriverKind;
+  readonly threadId: ThreadId;
+  readonly turnId: TurnId | undefined;
+  readonly message: string;
+  readonly detail?: unknown;
+  readonly rawPayload?: unknown;
+}): ProviderRuntimeEvent {
+  return {
+    type: "runtime.warning",
+    ...input.stamp,
+    provider: input.provider,
+    threadId: input.threadId,
+    turnId: input.turnId,
+    payload: {
+      message: input.message,
+      ...(input.detail !== undefined ? { detail: input.detail } : {}),
+    },
+    ...(input.rawPayload !== undefined
+      ? { raw: { source: PI_RPC_RAW_SOURCE, payload: input.rawPayload } }
+      : {}),
+  };
+}
+
+export function makePiRuntimeErrorEvent(input: {
+  readonly stamp: PiEventStamp;
+  readonly provider: ProviderDriverKind;
+  readonly threadId: ThreadId;
+  readonly turnId: TurnId | undefined;
+  readonly message: string;
+  readonly detail?: unknown;
+  readonly rawPayload?: unknown;
+}): ProviderRuntimeEvent {
+  return {
+    type: "runtime.error",
+    ...input.stamp,
+    provider: input.provider,
+    threadId: input.threadId,
+    turnId: input.turnId,
+    payload: {
+      message: input.message,
+      ...(input.detail !== undefined ? { detail: input.detail } : {}),
+    },
+    ...(input.rawPayload !== undefined
+      ? { raw: { source: PI_RPC_RAW_SOURCE, payload: input.rawPayload } }
+      : {}),
+  };
+}
+
+export function makePiTokenUsageEvent(input: {
+  readonly stamp: PiEventStamp;
+  readonly provider: ProviderDriverKind;
+  readonly threadId: ThreadId;
+  readonly turnId: TurnId | undefined;
+  readonly stats: {
+    readonly input: number;
+    readonly output: number;
+    readonly cacheRead: number;
+    readonly total: number;
+    readonly contextTokens: number | null;
+    readonly contextWindow: number | null;
+    readonly toolCalls: number;
+  };
+}): ProviderRuntimeEvent {
+  return {
+    type: "thread.token-usage.updated",
+    ...input.stamp,
+    provider: input.provider,
+    threadId: input.threadId,
+    turnId: input.turnId,
+    payload: {
+      usage: {
+        usedTokens: input.stats.contextTokens ?? input.stats.total,
+        totalProcessedTokens: input.stats.total,
+        ...(input.stats.contextWindow && input.stats.contextWindow > 0
+          ? { maxTokens: input.stats.contextWindow }
+          : {}),
+        inputTokens: input.stats.input,
+        cachedInputTokens: input.stats.cacheRead,
+        outputTokens: input.stats.output,
+        toolUses: input.stats.toolCalls,
+        compactsAutomatically: true,
+      },
     },
   };
 }

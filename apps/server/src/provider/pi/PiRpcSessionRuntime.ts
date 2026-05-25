@@ -26,12 +26,61 @@ export interface PiRpcModelInfo {
   readonly reasoning?: boolean;
 }
 
+export interface PiRpcImageContent {
+  readonly type: "image";
+  readonly data: string;
+  readonly mimeType: string;
+}
+
 export interface PiRpcSessionState {
   readonly model: PiRpcModelInfo | null;
   readonly thinkingLevel: string;
   readonly isStreaming: boolean;
+  readonly isCompacting: boolean;
+  readonly steeringMode: string;
+  readonly followUpMode: string;
   readonly sessionFile?: string;
   readonly sessionId?: string;
+  readonly sessionName?: string;
+  readonly autoCompactionEnabled: boolean;
+  readonly messageCount: number;
+  readonly pendingMessageCount: number;
+}
+
+export interface PiRpcSessionStats {
+  readonly sessionFile?: string;
+  readonly sessionId?: string;
+  readonly userMessages: number;
+  readonly assistantMessages: number;
+  readonly toolCalls: number;
+  readonly toolResults: number;
+  readonly totalMessages: number;
+  readonly tokens: {
+    readonly input: number;
+    readonly output: number;
+    readonly cacheRead: number;
+    readonly cacheWrite: number;
+    readonly total: number;
+  };
+  readonly cost: number;
+  readonly contextUsage?: {
+    readonly tokens: number | null;
+    readonly contextWindow: number;
+    readonly percent: number | null;
+  };
+}
+
+export interface PiRpcForkMessage {
+  readonly entryId: string;
+  readonly text: string;
+}
+
+export interface PiRpcCommandInfo {
+  readonly name: string;
+  readonly description?: string;
+  readonly source: string;
+  readonly location?: string;
+  readonly path?: string;
 }
 
 export type PiRpcAgentEvent = Record<string, unknown> & { readonly type: string };
@@ -58,9 +107,63 @@ export interface PiRpcSessionRuntimeShape {
     provider: string,
     modelId: string,
   ) => Effect.Effect<PiRpcModelInfo, PiRpcSessionRuntimeError>;
-  readonly prompt: (message: string) => Effect.Effect<void, PiRpcSessionRuntimeError>;
-  readonly steer: (message: string) => Effect.Effect<void, PiRpcSessionRuntimeError>;
+  readonly cycleModel: () => Effect.Effect<
+    { readonly model: PiRpcModelInfo | null; readonly thinkingLevel: string },
+    PiRpcSessionRuntimeError
+  >;
+  readonly prompt: (input: {
+    readonly message: string;
+    readonly images?: ReadonlyArray<PiRpcImageContent>;
+    readonly streamingBehavior?: "steer" | "followUp";
+  }) => Effect.Effect<void, PiRpcSessionRuntimeError>;
+  readonly steer: (input: {
+    readonly message: string;
+    readonly images?: ReadonlyArray<PiRpcImageContent>;
+  }) => Effect.Effect<void, PiRpcSessionRuntimeError>;
+  readonly followUp: (input: {
+    readonly message: string;
+    readonly images?: ReadonlyArray<PiRpcImageContent>;
+  }) => Effect.Effect<void, PiRpcSessionRuntimeError>;
   readonly abort: () => Effect.Effect<void, PiRpcSessionRuntimeError>;
+  readonly newSession: (input?: {
+    readonly parentSession?: string;
+  }) => Effect.Effect<{ cancelled: boolean }, PiRpcSessionRuntimeError>;
+  readonly getMessages: () => Effect.Effect<ReadonlyArray<unknown>, PiRpcSessionRuntimeError>;
+  readonly setThinkingLevel: (level: string) => Effect.Effect<void, PiRpcSessionRuntimeError>;
+  readonly cycleThinkingLevel: () => Effect.Effect<string | null, PiRpcSessionRuntimeError>;
+  readonly setSteeringMode: (mode: string) => Effect.Effect<void, PiRpcSessionRuntimeError>;
+  readonly setFollowUpMode: (mode: string) => Effect.Effect<void, PiRpcSessionRuntimeError>;
+  readonly compact: (input?: {
+    readonly customInstructions?: string;
+  }) => Effect.Effect<Record<string, unknown> | null, PiRpcSessionRuntimeError>;
+  readonly setAutoCompaction: (enabled: boolean) => Effect.Effect<void, PiRpcSessionRuntimeError>;
+  readonly setAutoRetry: (enabled: boolean) => Effect.Effect<void, PiRpcSessionRuntimeError>;
+  readonly abortRetry: () => Effect.Effect<void, PiRpcSessionRuntimeError>;
+  readonly bash: (
+    command: string,
+  ) => Effect.Effect<Record<string, unknown>, PiRpcSessionRuntimeError>;
+  readonly abortBash: () => Effect.Effect<void, PiRpcSessionRuntimeError>;
+  readonly getSessionStats: () => Effect.Effect<PiRpcSessionStats | null, PiRpcSessionRuntimeError>;
+  readonly exportHtml: (
+    outputPath?: string,
+  ) => Effect.Effect<string | null, PiRpcSessionRuntimeError>;
+  readonly fork: (
+    entryId: string,
+  ) => Effect.Effect<
+    { readonly text: string; readonly cancelled: boolean },
+    PiRpcSessionRuntimeError
+  >;
+  readonly clone: () => Effect.Effect<{ cancelled: boolean }, PiRpcSessionRuntimeError>;
+  readonly getForkMessages: () => Effect.Effect<
+    ReadonlyArray<PiRpcForkMessage>,
+    PiRpcSessionRuntimeError
+  >;
+  readonly getLastAssistantText: () => Effect.Effect<string | null, PiRpcSessionRuntimeError>;
+  readonly setSessionName: (name: string) => Effect.Effect<void, PiRpcSessionRuntimeError>;
+  readonly getCommands: () => Effect.Effect<
+    ReadonlyArray<PiRpcCommandInfo>,
+    PiRpcSessionRuntimeError
+  >;
   readonly switchSession: (
     sessionPath: string,
   ) => Effect.Effect<{ cancelled: boolean }, PiRpcSessionRuntimeError>;
@@ -328,8 +431,17 @@ export const makePiRpcSessionRuntime = (input: {
             model: parseModelInfo(data.model),
             thinkingLevel: typeof data.thinkingLevel === "string" ? data.thinkingLevel : "medium",
             isStreaming: data.isStreaming === true,
+            isCompacting: data.isCompacting === true,
+            steeringMode: typeof data.steeringMode === "string" ? data.steeringMode : "all",
+            followUpMode:
+              typeof data.followUpMode === "string" ? data.followUpMode : "one-at-a-time",
+            autoCompactionEnabled: data.autoCompactionEnabled !== false,
+            messageCount: typeof data.messageCount === "number" ? data.messageCount : 0,
+            pendingMessageCount:
+              typeof data.pendingMessageCount === "number" ? data.pendingMessageCount : 0,
             ...(typeof data.sessionFile === "string" ? { sessionFile: data.sessionFile } : {}),
             ...(typeof data.sessionId === "string" ? { sessionId: data.sessionId } : {}),
+            ...(typeof data.sessionName === "string" ? { sessionName: data.sessionName } : {}),
           } satisfies PiRpcSessionState);
         }),
       );
@@ -362,10 +474,251 @@ export const makePiRpcSessionRuntime = (input: {
         }),
       );
 
-    const prompt = (message: string) =>
-      writeCommand({ type: "prompt", message }).pipe(Effect.asVoid);
+    const prompt = (command: {
+      readonly message: string;
+      readonly images?: ReadonlyArray<PiRpcImageContent>;
+      readonly streamingBehavior?: "steer" | "followUp";
+    }) =>
+      writeCommand({
+        type: "prompt",
+        message: command.message,
+        ...(command.images && command.images.length > 0 ? { images: command.images } : {}),
+        ...(command.streamingBehavior ? { streamingBehavior: command.streamingBehavior } : {}),
+      }).pipe(Effect.asVoid);
 
-    const steer = (message: string) => writeCommand({ type: "steer", message }).pipe(Effect.asVoid);
+    const steer = (command: {
+      readonly message: string;
+      readonly images?: ReadonlyArray<PiRpcImageContent>;
+    }) =>
+      writeCommand({
+        type: "steer",
+        message: command.message,
+        ...(command.images && command.images.length > 0 ? { images: command.images } : {}),
+      }).pipe(Effect.asVoid);
+
+    const followUp = (command: {
+      readonly message: string;
+      readonly images?: ReadonlyArray<PiRpcImageContent>;
+    }) =>
+      writeCommand({
+        type: "follow_up",
+        message: command.message,
+        ...(command.images && command.images.length > 0 ? { images: command.images } : {}),
+      }).pipe(Effect.asVoid);
+
+    const newSession = (command?: { readonly parentSession?: string }) =>
+      writeCommand({
+        type: "new_session",
+        ...(command?.parentSession ? { parentSession: command.parentSession } : {}),
+      }).pipe(
+        Effect.flatMap((response) => {
+          const cancelled = isRecord(response.data) && response.data.cancelled === true;
+          return Effect.succeed({ cancelled });
+        }),
+      );
+
+    const getMessages = () =>
+      writeCommand({ type: "get_messages" }).pipe(
+        Effect.flatMap((response) => {
+          if (!isRecord(response.data) || !Array.isArray(response.data.messages)) {
+            return Effect.succeed([] as ReadonlyArray<unknown>);
+          }
+          return Effect.succeed(response.data.messages as ReadonlyArray<unknown>);
+        }),
+      );
+
+    const cycleModel = () =>
+      writeCommand({ type: "cycle_model" }).pipe(
+        Effect.flatMap((response) => {
+          const data = isRecord(response.data) ? response.data : undefined;
+          return Effect.succeed({
+            model: data ? parseModelInfo(data.model) : null,
+            thinkingLevel:
+              data && typeof data.thinkingLevel === "string" ? data.thinkingLevel : "medium",
+          });
+        }),
+      );
+
+    const setThinkingLevel = (level: string) =>
+      writeCommand({ type: "set_thinking_level", level }).pipe(Effect.asVoid);
+
+    const cycleThinkingLevel = () =>
+      writeCommand({ type: "cycle_thinking_level" }).pipe(
+        Effect.flatMap((response) => {
+          const level =
+            isRecord(response.data) && typeof response.data.level === "string"
+              ? response.data.level
+              : null;
+          return Effect.succeed(level);
+        }),
+      );
+
+    const setSteeringMode = (mode: string) =>
+      writeCommand({ type: "set_steering_mode", mode }).pipe(Effect.asVoid);
+
+    const setFollowUpMode = (mode: string) =>
+      writeCommand({ type: "set_follow_up_mode", mode }).pipe(Effect.asVoid);
+
+    const compact = (command?: { readonly customInstructions?: string }) =>
+      writeCommand({
+        type: "compact",
+        ...(command?.customInstructions ? { customInstructions: command.customInstructions } : {}),
+      }).pipe(
+        Effect.flatMap((response) =>
+          Effect.succeed(isRecord(response.data) ? response.data : null),
+        ),
+      );
+
+    const setAutoCompaction = (enabled: boolean) =>
+      writeCommand({ type: "set_auto_compaction", enabled }).pipe(Effect.asVoid);
+
+    const setAutoRetry = (enabled: boolean) =>
+      writeCommand({ type: "set_auto_retry", enabled }).pipe(Effect.asVoid);
+
+    const abortRetry = () => writeCommand({ type: "abort_retry" }).pipe(Effect.asVoid);
+
+    const bash = (command: string) =>
+      writeCommand({ type: "bash", command }).pipe(
+        Effect.flatMap((response) => {
+          if (!isRecord(response.data)) {
+            return Effect.fail(
+              new PiRpcSessionRuntimeError({ detail: "Pi RPC bash returned invalid data" }),
+            );
+          }
+          return Effect.succeed(response.data);
+        }),
+      );
+
+    const abortBash = () => writeCommand({ type: "abort_bash" }).pipe(Effect.asVoid);
+
+    const parseSessionStats = (data: unknown): PiRpcSessionStats | null => {
+      if (!isRecord(data)) return null;
+      const tokensRaw = isRecord(data.tokens) ? data.tokens : {};
+      return {
+        ...(typeof data.sessionFile === "string" ? { sessionFile: data.sessionFile } : {}),
+        ...(typeof data.sessionId === "string" ? { sessionId: data.sessionId } : {}),
+        userMessages: typeof data.userMessages === "number" ? data.userMessages : 0,
+        assistantMessages: typeof data.assistantMessages === "number" ? data.assistantMessages : 0,
+        toolCalls: typeof data.toolCalls === "number" ? data.toolCalls : 0,
+        toolResults: typeof data.toolResults === "number" ? data.toolResults : 0,
+        totalMessages: typeof data.totalMessages === "number" ? data.totalMessages : 0,
+        tokens: {
+          input: typeof tokensRaw.input === "number" ? tokensRaw.input : 0,
+          output: typeof tokensRaw.output === "number" ? tokensRaw.output : 0,
+          cacheRead: typeof tokensRaw.cacheRead === "number" ? tokensRaw.cacheRead : 0,
+          cacheWrite: typeof tokensRaw.cacheWrite === "number" ? tokensRaw.cacheWrite : 0,
+          total: typeof tokensRaw.total === "number" ? tokensRaw.total : 0,
+        },
+        cost: typeof data.cost === "number" ? data.cost : 0,
+        ...(isRecord(data.contextUsage)
+          ? {
+              contextUsage: {
+                tokens:
+                  typeof data.contextUsage.tokens === "number" ? data.contextUsage.tokens : null,
+                contextWindow:
+                  typeof data.contextUsage.contextWindow === "number"
+                    ? data.contextUsage.contextWindow
+                    : 0,
+                percent:
+                  typeof data.contextUsage.percent === "number" ? data.contextUsage.percent : null,
+              },
+            }
+          : {}),
+      };
+    };
+
+    const getSessionStats = () =>
+      writeCommand({ type: "get_session_stats" }).pipe(
+        Effect.flatMap((response) => Effect.succeed(parseSessionStats(response.data))),
+      );
+
+    const exportHtml = (outputPath?: string) =>
+      writeCommand({
+        type: "export_html",
+        ...(outputPath ? { outputPath } : {}),
+      }).pipe(
+        Effect.flatMap((response) => {
+          if (!isRecord(response.data) || typeof response.data.path !== "string") {
+            return Effect.succeed(null);
+          }
+          return Effect.succeed(response.data.path);
+        }),
+      );
+
+    const fork = (entryId: string) =>
+      writeCommand({ type: "fork", entryId }).pipe(
+        Effect.flatMap((response) => {
+          const data = isRecord(response.data) ? response.data : {};
+          return Effect.succeed({
+            text: typeof data.text === "string" ? data.text : "",
+            cancelled: data.cancelled === true,
+          });
+        }),
+      );
+
+    const clone = () =>
+      writeCommand({ type: "clone" }).pipe(
+        Effect.flatMap((response) => {
+          const cancelled = isRecord(response.data) && response.data.cancelled === true;
+          return Effect.succeed({ cancelled });
+        }),
+      );
+
+    const getForkMessages = () =>
+      writeCommand({ type: "get_fork_messages" }).pipe(
+        Effect.flatMap((response) => {
+          if (!isRecord(response.data) || !Array.isArray(response.data.messages)) {
+            return Effect.succeed([] as ReadonlyArray<PiRpcForkMessage>);
+          }
+          const messages = (response.data.messages as ReadonlyArray<unknown>)
+            .map((entry) => {
+              if (!isRecord(entry)) return null;
+              if (typeof entry.entryId !== "string" || typeof entry.text !== "string") {
+                return null;
+              }
+              return { entryId: entry.entryId, text: entry.text };
+            })
+            .filter((entry): entry is PiRpcForkMessage => entry !== null);
+          return Effect.succeed(messages);
+        }),
+      );
+
+    const getLastAssistantText = () =>
+      writeCommand({ type: "get_last_assistant_text" }).pipe(
+        Effect.flatMap((response) => {
+          if (!isRecord(response.data)) {
+            return Effect.succeed(null);
+          }
+          return Effect.succeed(typeof response.data.text === "string" ? response.data.text : null);
+        }),
+      );
+
+    const setSessionName = (name: string) =>
+      writeCommand({ type: "set_session_name", name }).pipe(Effect.asVoid);
+
+    const getCommands = () =>
+      writeCommand({ type: "get_commands" }).pipe(
+        Effect.flatMap((response) => {
+          if (!isRecord(response.data) || !Array.isArray(response.data.commands)) {
+            return Effect.succeed([] as ReadonlyArray<PiRpcCommandInfo>);
+          }
+          const commands = (response.data.commands as ReadonlyArray<unknown>)
+            .map((entry) => {
+              if (!isRecord(entry) || typeof entry.name !== "string") return null;
+              return {
+                name: entry.name,
+                ...(typeof entry.description === "string"
+                  ? { description: entry.description }
+                  : {}),
+                source: typeof entry.source === "string" ? entry.source : "unknown",
+                ...(typeof entry.location === "string" ? { location: entry.location } : {}),
+                ...(typeof entry.path === "string" ? { path: entry.path } : {}),
+              } satisfies PiRpcCommandInfo;
+            })
+            .filter((entry): entry is PiRpcCommandInfo => entry !== null);
+          return Effect.succeed(commands);
+        }),
+      );
 
     const abort = () => writeCommand({ type: "abort" }).pipe(Effect.asVoid);
 
@@ -403,9 +756,31 @@ export const makePiRpcSessionRuntime = (input: {
       getState,
       getAvailableModels,
       setModel,
+      cycleModel,
       prompt,
       steer,
+      followUp,
       abort,
+      newSession,
+      getMessages,
+      setThinkingLevel,
+      cycleThinkingLevel,
+      setSteeringMode,
+      setFollowUpMode,
+      compact,
+      setAutoCompaction,
+      setAutoRetry,
+      abortRetry,
+      bash,
+      abortBash,
+      getSessionStats,
+      exportHtml,
+      fork,
+      clone,
+      getForkMessages,
+      getLastAssistantText,
+      setSessionName,
+      getCommands,
       switchSession,
       waitForAgentEnd,
       sendExtensionUiResponse,

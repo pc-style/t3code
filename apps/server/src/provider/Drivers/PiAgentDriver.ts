@@ -16,6 +16,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
+import { ServerConfig } from "../../config.ts";
 import type { TextGenerationShape } from "../../textGeneration/TextGeneration.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makePiAgentAdapter } from "../Layers/PiAgentAdapter.ts";
@@ -75,7 +76,8 @@ const UPDATE = makePackageManagedProviderMaintenanceResolver({
 export type PiAgentDriverEnv =
   | ChildProcessSpawner.ChildProcessSpawner
   | FileSystem.FileSystem
-  | ProviderEventLoggers;
+  | ProviderEventLoggers
+  | ServerConfig;
 
 const withInstanceIdentity =
   (input: {
@@ -106,6 +108,7 @@ export const PiAgentDriver: ProviderDriver<PiAgentSettings, PiAgentDriverEnv> = 
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
       const eventLoggers = yield* ProviderEventLoggers;
+      const serverConfig = yield* ServerConfig;
       const processEnv = mergeProviderInstanceEnvironment(environment);
       const continuationIdentity = defaultProviderContinuationIdentity({
         driverKind: DRIVER_KIND,
@@ -125,8 +128,12 @@ export const PiAgentDriver: ProviderDriver<PiAgentSettings, PiAgentDriverEnv> = 
 
       const adapter = yield* makePiAgentAdapter(effectiveConfig, {
         environment: processEnv,
+        attachmentsDir: serverConfig.attachmentsDir,
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
-      }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
+      }).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+      );
 
       const checkProvider = checkPiAgentProviderStatus(effectiveConfig, processEnv).pipe(
         Effect.map(stampIdentity),

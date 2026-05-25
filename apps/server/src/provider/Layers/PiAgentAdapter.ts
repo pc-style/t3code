@@ -9,10 +9,10 @@ import {
   type PiAgentSettings,
   type ProviderApprovalDecision,
   type ProviderRuntimeEvent,
+  type ProviderSendTurnInput,
   type ProviderSession,
   type ProviderUserInputAnswers,
   ApprovalRequestId,
-  RuntimeRequestId,
   type ThreadId,
   TurnId,
 } from "@t3tools/contracts";
@@ -21,6 +21,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Random from "effect/Random";
@@ -28,6 +29,8 @@ import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/unstable/process";
+
+import { resolveAttachmentPath } from "../../attachmentStore.ts";
 
 import {
   ProviderAdapterProcessError,
@@ -38,13 +41,25 @@ import {
 import {
   makePiAssistantItemEvent,
   makePiContentDeltaEvent,
-  makePiExtensionUiRequestEvent,
+  makePiRuntimeErrorEvent,
+  makePiRuntimeWarningEvent,
+  makePiTaskProgressEvent,
+  makePiTokenUsageEvent,
   makePiToolCallEvent,
+  makePiToolProgressEvent,
 } from "../pi/PiCoreRuntimeEvents.ts";
+import {
+  extractPiToolProgressSummary,
+  isPiExtensionUiDialogMethod,
+  mapPiExtensionUiRequestToRuntimeEvents,
+  parsePiExtensionUiMethod,
+  resolvePiExtensionUiResponse,
+} from "../pi/PiExtensionUi.ts";
 import {
   makePiRpcSessionRuntime,
   PiRpcSessionRuntimeError,
   type PiRpcAgentEvent,
+  type PiRpcImageContent,
   type PiRpcSessionRuntimeShape,
 } from "../pi/PiRpcSessionRuntime.ts";
 import { parsePiModelSlug } from "./PiAgentProvider.ts";
@@ -56,6 +71,7 @@ const PI_RESUME_VERSION = 1 as const;
 
 export interface PiAgentAdapterLiveOptions {
   readonly environment?: NodeJS.ProcessEnv;
+  readonly attachmentsDir?: string;
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
 }
@@ -63,6 +79,7 @@ export interface PiAgentAdapterLiveOptions {
 interface PendingExtensionUi {
   readonly decision: Deferred.Deferred<ProviderApprovalDecision | ProviderUserInputAnswers>;
   readonly kind: "confirm" | "select" | "input" | "editor";
+  readonly prefill?: string;
 }
 
 interface PiSessionContext {
@@ -115,9 +132,14 @@ function withPiOpenCodeAuthEnv(baseEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 export const makePiAgentAdapter = (
   piAgentSettings: PiAgentSettings,
   options: PiAgentAdapterLiveOptions = {},
-): Effect.Effect<PiAgentAdapterShape, never, ChildProcessSpawner.ChildProcessSpawner> =>
+): Effect.Effect<
+  PiAgentAdapterShape,
+  never,
+  ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem
+> =>
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const fileSystem = yield* FileSystem.FileSystem;
     const binaryPath = piAgentSettings.binaryPath?.trim() || "pi";
     const processEnv = withPiOpenCodeAuthEnv(options.environment ?? process.env);
     const runtimeEvents = yield* PubSub.unbounded<ProviderRuntimeEvent>();
@@ -132,6 +154,72 @@ export const makePiAgentAdapter = (
       });
 
     const offerRuntimeEvent = (event: ProviderRuntimeEvent) => PubSub.publish(runtimeEvents, event);
+
+    const buildPromptImages = (input: {
+      readonly threadId: ThreadId;
+      readonly attachments: ProviderSendTurnInput["attachments"];
+    }) =>
+      Effect.gen(function* () {
+        const attachmentsDir = options.attachmentsDir;
+        if (!attachmentsDir || !input.attachments || input.attachments.length === 0) {
+          return [] as ReadonlyArray<PiRpcImageContent>;
+        }
+        const images: Array<PiRpcImageContent> = [];
+        for (const attachment of input.attachments) {
+          const attachmentPath = resolveAttachmentPath({ attachmentsDir, attachment });
+          if (!attachmentPath) {
+            return yield* new ProviderAdapterValidationError({
+              provider: PROVIDER,
+              operation: "sendTurn",
+              issue: `Invalid attachment id '${attachment.id}'.`,
+            });
+          }
+          const bytes = yield* fileSystem.readFile(attachmentPath).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ProviderAdapterRequestError({
+                  provider: PROVIDER,
+                  method: "prompt",
+                  detail: cause.message,
+                  cause,
+                }),
+            ),
+          );
+          images.push({
+            type: "image",
+            data: Buffer.from(bytes).toString("base64"),
+            mimeType: attachment.mimeType,
+          });
+        }
+        return images;
+      });
+
+    const emitSessionStats = (ctx: PiSessionContext) =>
+      Effect.gen(function* () {
+        const stats = yield* ctx.runtime
+          .getSessionStats()
+          .pipe(Effect.mapError((cause) => mapPiError(ctx.threadId, "get_session_stats", cause)));
+        if (!stats) {
+          return;
+        }
+        yield* offerRuntimeEvent(
+          makePiTokenUsageEvent({
+            stamp: yield* makeEventStamp(),
+            provider: PROVIDER,
+            threadId: ctx.threadId,
+            turnId: ctx.activeTurnId,
+            stats: {
+              input: stats.tokens.input,
+              output: stats.tokens.output,
+              cacheRead: stats.tokens.cacheRead,
+              total: stats.tokens.total,
+              contextTokens: stats.contextUsage?.tokens ?? null,
+              contextWindow: stats.contextUsage?.contextWindow ?? null,
+              toolCalls: stats.toolCalls,
+            },
+          }),
+        );
+      }).pipe(Effect.catchCause(() => Effect.void));
 
     const requireSession = (threadId: ThreadId) =>
       Effect.gen(function* () {
@@ -149,19 +237,22 @@ export const makePiAgentAdapter = (
       Effect.gen(function* () {
         switch (event.type) {
           case "extension_ui_request": {
-            if (typeof event.id !== "string") return;
-            const method = typeof event.method === "string" ? event.method : "unknown";
-            if (method === "notify" || method === "setStatus" || method === "setWidget") {
+            const method = parsePiExtensionUiMethod(event);
+            if (!isPiExtensionUiDialogMethod(method)) {
+              const mapped = mapPiExtensionUiRequestToRuntimeEvents({
+                stamp: yield* makeEventStamp(),
+                provider: PROVIDER,
+                threadId: ctx.threadId,
+                turnId: ctx.activeTurnId,
+                event,
+              });
+              for (const runtimeEvent of mapped) {
+                yield* offerRuntimeEvent(runtimeEvent);
+              }
               return;
             }
+            if (typeof event.id !== "string") return;
             const requestId = ApprovalRequestId.make(event.id);
-            const title = typeof event.title === "string" ? event.title : "Pi extension request";
-            const detail =
-              typeof event.message === "string"
-                ? event.message
-                : typeof event.placeholder === "string"
-                  ? event.placeholder
-                  : undefined;
             const decision = yield* Deferred.make<
               ProviderApprovalDecision | ProviderUserInputAnswers
             >();
@@ -172,19 +263,110 @@ export const makePiAgentAdapter = (
                   ? "confirm"
                   : method === "select"
                     ? "select"
-                    : method === "input" || method === "editor"
-                      ? "input"
-                      : "select",
+                    : method === "editor"
+                      ? "editor"
+                      : "input",
+              ...(typeof event.prefill === "string" ? { prefill: event.prefill } : {}),
             });
+            const mapped = mapPiExtensionUiRequestToRuntimeEvents({
+              stamp: yield* makeEventStamp(),
+              provider: PROVIDER,
+              threadId: ctx.threadId,
+              turnId: ctx.activeTurnId,
+              event,
+            });
+            for (const runtimeEvent of mapped) {
+              yield* offerRuntimeEvent(runtimeEvent);
+            }
+            return;
+          }
+          case "extension_error": {
             yield* offerRuntimeEvent(
-              makePiExtensionUiRequestEvent({
+              makePiRuntimeErrorEvent({
                 stamp: yield* makeEventStamp(),
                 provider: PROVIDER,
                 threadId: ctx.threadId,
                 turnId: ctx.activeTurnId,
-                requestId: RuntimeRequestId.make(requestId),
-                title,
-                ...(detail ? { detail } : {}),
+                message: typeof event.error === "string" ? event.error : "Pi extension error",
+                detail: event,
+                rawPayload: event,
+              }),
+            );
+            return;
+          }
+          case "queue_update": {
+            const steering = Array.isArray(event.steering) ? event.steering : [];
+            const followUp = Array.isArray(event.followUp) ? event.followUp : [];
+            if (steering.length === 0 && followUp.length === 0) {
+              return;
+            }
+            yield* offerRuntimeEvent(
+              makePiRuntimeWarningEvent({
+                stamp: yield* makeEventStamp(),
+                provider: PROVIDER,
+                threadId: ctx.threadId,
+                turnId: ctx.activeTurnId,
+                message: "Pi message queue updated",
+                detail: { steering, followUp },
+                rawPayload: event,
+              }),
+            );
+            return;
+          }
+          case "auto_retry_start":
+          case "auto_retry_end": {
+            yield* offerRuntimeEvent(
+              makePiRuntimeWarningEvent({
+                stamp: yield* makeEventStamp(),
+                provider: PROVIDER,
+                threadId: ctx.threadId,
+                turnId: ctx.activeTurnId,
+                message:
+                  event.type === "auto_retry_start"
+                    ? "Pi auto-retry started"
+                    : event.success === true
+                      ? "Pi auto-retry succeeded"
+                      : "Pi auto-retry failed",
+                detail: event,
+                rawPayload: event,
+              }),
+            );
+            return;
+          }
+          case "compaction_start":
+          case "compaction_end": {
+            if (
+              event.type === "compaction_end" &&
+              event.aborted !== true &&
+              isRecord(event.result)
+            ) {
+              yield* offerRuntimeEvent({
+                type: "thread.state.changed",
+                ...(yield* makeEventStamp()),
+                provider: PROVIDER,
+                threadId: ctx.threadId,
+                turnId: ctx.activeTurnId,
+                payload: {
+                  state: "compacted",
+                  detail: {
+                    reason: typeof event.reason === "string" ? event.reason : "compaction",
+                    result: event.result,
+                  },
+                },
+              });
+              return;
+            }
+            yield* offerRuntimeEvent(
+              makePiRuntimeWarningEvent({
+                stamp: yield* makeEventStamp(),
+                provider: PROVIDER,
+                threadId: ctx.threadId,
+                turnId: ctx.activeTurnId,
+                message:
+                  event.type === "compaction_start"
+                    ? "Pi compaction started"
+                    : "Pi compaction ended",
+                detail: event,
                 rawPayload: event,
               }),
             );
@@ -219,8 +401,20 @@ export const makePiAgentAdapter = (
             if (!assistantEvent) return;
             const delta = typeof assistantEvent.delta === "string" ? assistantEvent.delta : "";
             if (!delta) return;
-            const streamKind =
-              assistantEvent.type === "thinking_delta" ? "reasoning_text" : "assistant_text";
+            if (assistantEvent.type === "thinking_delta") {
+              yield* offerRuntimeEvent(
+                makePiTaskProgressEvent({
+                  stamp: yield* makeEventStamp(),
+                  provider: PROVIDER,
+                  threadId: ctx.threadId,
+                  turnId: ctx.activeTurnId,
+                  taskId: ctx.activeTurnId ?? ctx.threadId,
+                  summary: delta,
+                  rawPayload: event,
+                }),
+              );
+              return;
+            }
             const message = isRecord(event.message) ? event.message : undefined;
             const messageKey =
               message && typeof message.id === "string"
@@ -237,7 +431,7 @@ export const makePiAgentAdapter = (
                 turnId: ctx.activeTurnId,
                 ...(itemId ? { itemId } : {}),
                 delta,
-                streamKind,
+                streamKind: "assistant_text",
                 rawPayload: event,
               }),
             );
@@ -258,6 +452,26 @@ export const makePiAgentAdapter = (
                 turnId: ctx.activeTurnId,
                 itemId,
                 lifecycle: "item.completed",
+              }),
+            );
+            return;
+          }
+          case "tool_execution_update": {
+            const toolCallId =
+              typeof event.toolCallId === "string" ? event.toolCallId : crypto.randomUUID();
+            const summary = extractPiToolProgressSummary(event);
+            if (!summary) {
+              return;
+            }
+            yield* offerRuntimeEvent(
+              makePiToolProgressEvent({
+                stamp: yield* makeEventStamp(),
+                provider: PROVIDER,
+                threadId: ctx.threadId,
+                turnId: ctx.activeTurnId,
+                toolCallId,
+                summary,
+                rawPayload: event,
               }),
             );
             return;
@@ -324,6 +538,13 @@ export const makePiAgentAdapter = (
           const initialModel = input.modelSelection?.model
             ? parsePiModelSlug(input.modelSelection.model)
             : undefined;
+          const spawnExtraArgs = [
+            "--no-session",
+            ...(input.runtimeMode === "full-access" ? [] : ["--no-tools"]),
+            ...(initialModel
+              ? ["--provider", initialModel.provider, "--model", initialModel.modelId]
+              : []),
+          ];
           const runtime = yield* makePiRpcSessionRuntime({
             spawn: {
               command: binaryPath,
@@ -332,13 +553,7 @@ export const makePiAgentAdapter = (
               env: processEnv,
             },
             childProcessSpawner: spawner,
-            extraArgs: [
-              "--no-session",
-              "--no-tools",
-              ...(initialModel
-                ? ["--provider", initialModel.provider, "--model", initialModel.modelId]
-                : []),
-            ],
+            extraArgs: spawnExtraArgs,
           }).pipe(Effect.provideService(Scope.Scope, sessionScope));
           yield* runtime.start().pipe(
             Effect.mapError(
@@ -472,13 +687,21 @@ export const makePiAgentAdapter = (
         }
 
         const promptText = input.input?.trim() ?? "";
-        if (!promptText) {
+        const images = yield* buildPromptImages({
+          threadId: input.threadId,
+          attachments: input.attachments,
+        });
+        if (!promptText && images.length === 0) {
           return yield* new ProviderAdapterValidationError({
             provider: PROVIDER,
             operation: "sendTurn",
-            issue: "Turn requires non-empty text.",
+            issue: "Turn requires non-empty text or attachments.",
           });
         }
+
+        const streamingState = yield* ctx.runtime
+          .getState()
+          .pipe(Effect.mapError((cause) => mapPiError(input.threadId, "get_state", cause)));
 
         ctx.activeTurnId = turnId;
         ctx.session = {
@@ -501,7 +724,11 @@ export const makePiAgentAdapter = (
         ctx.agentEndSignal = agentEndSignal;
 
         yield* ctx.runtime
-          .prompt(promptText)
+          .prompt({
+            message: promptText || "See attached image(s).",
+            ...(images.length > 0 ? { images } : {}),
+            ...(streamingState.isStreaming ? { streamingBehavior: "steer" as const } : {}),
+          })
           .pipe(Effect.mapError((cause) => mapPiError(input.threadId, "prompt", cause)));
         yield* Deferred.await(agentEndSignal).pipe(
           Effect.timeoutOption("5 minutes"),
@@ -537,6 +764,8 @@ export const makePiAgentAdapter = (
           resumeCursor,
         };
 
+        yield* emitSessionStats(ctx);
+
         yield* offerRuntimeEvent({
           type: "turn.completed",
           ...(yield* makeEventStamp()),
@@ -551,7 +780,7 @@ export const makePiAgentAdapter = (
           turnId,
           resumeCursor,
         };
-      });
+      }).pipe(Effect.mapError((cause) => mapPiError(input.threadId, "sendTurn", cause)));
 
     const interruptTurn: PiAgentAdapterShape["interruptTurn"] = (threadId) =>
       Effect.gen(function* () {
@@ -576,25 +805,27 @@ export const makePiAgentAdapter = (
             detail: `Unknown pending Pi extension request: ${requestId}`,
           });
         }
-        const accepted = decision === "accept" || decision === "acceptForSession";
-        if (pending.kind === "confirm") {
+        const responseBody = resolvePiExtensionUiResponse({
+          pendingKind: pending.kind,
+          decision,
+          ...(pending.prefill !== undefined ? { prefill: pending.prefill } : {}),
+        });
+        if ("cancelled" in responseBody && responseBody.cancelled) {
+          yield* ctx.runtime
+            .sendExtensionUiResponse({ id: requestId, cancelled: true })
+            .pipe(Effect.mapError((cause) => mapPiError(threadId, "extension_ui_response", cause)));
+        } else {
           yield* ctx.runtime
             .sendExtensionUiResponse({
               id: requestId,
-              confirmed: accepted,
+              ...(responseBody.confirmed !== undefined
+                ? { confirmed: responseBody.confirmed }
+                : {}),
+              ...(responseBody.value !== undefined ? { value: responseBody.value } : {}),
             })
             .pipe(Effect.mapError((cause) => mapPiError(threadId, "extension_ui_response", cause)));
-          yield* Deferred.succeed(pending.decision, decision);
-          ctx.pendingExtensionUi.delete(requestId);
-          return;
         }
-        yield* Deferred.succeed(pending.decision, accepted ? { selected: "Allow" } : {});
-        yield* ctx.runtime
-          .sendExtensionUiResponse({
-            id: requestId,
-            value: accepted ? "Allow" : "Block",
-          })
-          .pipe(Effect.mapError((cause) => mapPiError(threadId, "extension_ui_response", cause)));
+        yield* Deferred.succeed(pending.decision, decision);
         ctx.pendingExtensionUi.delete(requestId);
       });
 
@@ -613,13 +844,23 @@ export const makePiAgentAdapter = (
             detail: `Unknown pending Pi extension request: ${requestId}`,
           });
         }
-        const firstAnswer = Object.values(answers)[0];
-        yield* ctx.runtime
-          .sendExtensionUiResponse({
-            id: requestId,
-            ...(typeof firstAnswer === "string" ? { value: firstAnswer } : { cancelled: true }),
-          })
-          .pipe(Effect.mapError((cause) => mapPiError(threadId, "extension_ui_response", cause)));
+        const responseBody = resolvePiExtensionUiResponse({
+          pendingKind: pending.kind,
+          answers,
+          ...(pending.prefill !== undefined ? { prefill: pending.prefill } : {}),
+        });
+        if ("cancelled" in responseBody && responseBody.cancelled) {
+          yield* ctx.runtime
+            .sendExtensionUiResponse({ id: requestId, cancelled: true })
+            .pipe(Effect.mapError((cause) => mapPiError(threadId, "extension_ui_response", cause)));
+        } else {
+          yield* ctx.runtime
+            .sendExtensionUiResponse({
+              id: requestId,
+              ...(responseBody.value !== undefined ? { value: responseBody.value } : {}),
+            })
+            .pipe(Effect.mapError((cause) => mapPiError(threadId, "extension_ui_response", cause)));
+        }
         yield* Deferred.succeed(pending.decision, answers);
         ctx.pendingExtensionUi.delete(requestId);
       });
@@ -653,20 +894,50 @@ export const makePiAgentAdapter = (
 
     const readThread: PiAgentAdapterShape["readThread"] = (threadId) =>
       Effect.gen(function* () {
-        yield* requireSession(threadId);
-        return {
-          threadId,
-          turns: [],
-        };
+        const ctx = yield* requireSession(threadId);
+        const messages = yield* ctx.runtime
+          .getMessages()
+          .pipe(Effect.mapError((cause) => mapPiError(threadId, "get_messages", cause)));
+
+        const turns: Array<{ id: TurnId; items: ReadonlyArray<unknown> }> = [];
+        let currentTurn: { id: TurnId; items: Array<unknown> } | null = null;
+
+        for (const message of messages) {
+          if (!isRecord(message)) continue;
+          const role = typeof message.role === "string" ? message.role : undefined;
+          const messageId = typeof message.id === "string" ? message.id : crypto.randomUUID();
+          if (role === "user") {
+            if (currentTurn) {
+              turns.push(currentTurn);
+            }
+            currentTurn = { id: TurnId.make(messageId), items: [message] };
+            continue;
+          }
+          if (currentTurn) {
+            currentTurn.items.push(message);
+          }
+        }
+        if (currentTurn) {
+          turns.push(currentTurn);
+        }
+
+        return { threadId, turns };
       });
 
-    const rollbackThread: PiAgentAdapterShape["rollbackThread"] = (threadId) =>
+    const rollbackThread: PiAgentAdapterShape["rollbackThread"] = (threadId, numTurns) =>
       Effect.gen(function* () {
-        yield* requireSession(threadId);
-        return {
-          threadId,
-          turns: [],
-        };
+        const ctx = yield* requireSession(threadId);
+        const forkMessages = yield* ctx.runtime
+          .getForkMessages()
+          .pipe(Effect.mapError((cause) => mapPiError(threadId, "get_fork_messages", cause)));
+        const targetIndex = forkMessages.length - numTurns - 1;
+        const target = targetIndex >= 0 ? forkMessages[targetIndex] : undefined;
+        if (target) {
+          yield* ctx.runtime
+            .fork(target.entryId)
+            .pipe(Effect.mapError((cause) => mapPiError(threadId, "fork", cause)));
+        }
+        return yield* readThread(threadId);
       });
 
     const stopAll: PiAgentAdapterShape["stopAll"] = () =>
