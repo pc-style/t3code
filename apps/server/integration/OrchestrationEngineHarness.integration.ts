@@ -5,6 +5,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   ApprovalRequestId,
   CodexSettings,
+  PiAgentSettings,
   ProviderDriverKind,
   type OrchestrationEvent,
   type OrchestrationThread,
@@ -39,6 +40,7 @@ import { ProviderSessionDirectoryLive } from "../src/provider/Layers/ProviderSes
 import { ServerSettingsService } from "../src/serverSettings.ts";
 import { makeProviderServiceLive } from "../src/provider/Layers/ProviderService.ts";
 import { makeCodexAdapter } from "../src/provider/Layers/CodexAdapter.ts";
+import { makePiAgentAdapter } from "../src/provider/Layers/PiAgentAdapter.ts";
 import {
   NoOpProviderEventLoggers,
   ProviderEventLoggers,
@@ -79,6 +81,12 @@ import { GitWorkflowService } from "../src/git/GitWorkflowService.ts";
 import * as VcsProcess from "../src/vcs/VcsProcess.ts";
 
 const decodeCodexSettings = Schema.decodeEffect(CodexSettings);
+const decodePiAgentSettings = Schema.decodeEffect(PiAgentSettings);
+
+function piAgentProcessEnv(): NodeJS.ProcessEnv {
+  const apiKey = process.env.OPENCODE_API_KEY ?? process.env.OPENCODE_GO_API_KEY;
+  return apiKey ? { ...process.env, OPENCODE_API_KEY: apiKey } : process.env;
+}
 
 function runGit(cwd: string, args: ReadonlyArray<string>) {
   return execFileSync("git", args, {
@@ -222,6 +230,7 @@ export interface OrchestrationIntegrationHarness {
 interface MakeOrchestrationIntegrationHarnessOptions {
   readonly provider?: ProviderDriverKind;
   readonly realCodex?: boolean;
+  readonly realPi?: boolean;
 }
 
 export const makeOrchestrationIntegrationHarness = (
@@ -233,11 +242,13 @@ export const makeOrchestrationIntegrationHarness = (
 
     const provider = options?.provider ?? ProviderDriverKind.make("codex");
     const useRealCodex = options?.realCodex === true;
-    const adapterHarness = useRealCodex
-      ? null
-      : yield* makeTestProviderAdapterHarness({
-          provider,
-        });
+    const useRealPi = options?.realPi === true;
+    const adapterHarness =
+      useRealCodex || useRealPi
+        ? null
+        : yield* makeTestProviderAdapterHarness({
+            provider,
+          });
     const fakeRegistry = adapterHarness
       ? Layer.succeed(
           ProviderAdapterRegistry,
@@ -278,6 +289,21 @@ export const makeOrchestrationIntegrationHarness = (
       Layer.provideMerge(NodeServices.layer),
       Layer.provideMerge(providerSessionDirectoryLayer),
     );
+    const realPiRegistry = Layer.effect(
+      ProviderAdapterRegistry,
+      Effect.gen(function* () {
+        const piSettings = yield* decodePiAgentSettings({ enabled: true });
+        const piAdapter = yield* makePiAgentAdapter(piSettings, {
+          environment: piAgentProcessEnv(),
+        });
+        return makeAdapterRegistryMock({
+          [ProviderDriverKind.make("piAgent")]: piAdapter,
+        });
+      }),
+    ).pipe(
+      Layer.provideMerge(NodeServices.layer),
+      Layer.provideMerge(providerSessionDirectoryLayer),
+    );
     const providerEventLoggersLayer = Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers);
     const providerLayer = useRealCodex
       ? makeProviderServiceLive().pipe(
@@ -286,12 +312,19 @@ export const makeOrchestrationIntegrationHarness = (
           Layer.provide(AnalyticsService.layerTest),
           Layer.provide(providerEventLoggersLayer),
         )
-      : makeProviderServiceLive().pipe(
-          Layer.provide(providerSessionDirectoryLayer),
-          Layer.provide(fakeRegistry!),
-          Layer.provide(AnalyticsService.layerTest),
-          Layer.provide(providerEventLoggersLayer),
-        );
+      : useRealPi
+        ? makeProviderServiceLive().pipe(
+            Layer.provide(providerSessionDirectoryLayer),
+            Layer.provide(realPiRegistry),
+            Layer.provide(AnalyticsService.layerTest),
+            Layer.provide(providerEventLoggersLayer),
+          )
+        : makeProviderServiceLive().pipe(
+            Layer.provide(providerSessionDirectoryLayer),
+            Layer.provide(fakeRegistry!),
+            Layer.provide(AnalyticsService.layerTest),
+            Layer.provide(providerEventLoggersLayer),
+          );
 
     const checkpointStoreLayer = CheckpointStoreLive.pipe(Layer.provide(VcsDriverRegistry.layer));
     const projectionSnapshotQueryLayer = OrchestrationProjectionSnapshotQueryLive;

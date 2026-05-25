@@ -71,14 +71,14 @@ Use these as implementation references when designing protocol handling, UX flow
 
 ### Common commands (see `package.json` scripts)
 
-| Task | Command |
-|------|---------|
-| Install deps | `bun install` |
-| Dev (all) | `bun dev` |
-| Lint | `bun lint` |
-| Format check | `bun fmt:check` |
-| Typecheck | `bun typecheck` |
-| Tests | `bun run test` (NOT `bun test`) |
+| Task         | Command                         |
+| ------------ | ------------------------------- |
+| Install deps | `bun install`                   |
+| Dev (all)    | `bun dev`                       |
+| Lint         | `bun lint`                      |
+| Format check | `bun fmt:check`                 |
+| Typecheck    | `bun typecheck`                 |
+| Tests        | `bun run test` (NOT `bun test`) |
 
 ### Gotchas
 
