@@ -78,11 +78,11 @@ function inferConfirmRequestType(title: string, message: string | undefined): Ca
   ) {
     return "command_execution_approval";
   }
-  if (combined.includes("read") || combined.includes("file")) {
-    return "file_read_approval";
-  }
   if (combined.includes("edit") || combined.includes("write") || combined.includes("patch")) {
     return "file_change_approval";
+  }
+  if (combined.includes("read") || combined.includes("file")) {
+    return "file_read_approval";
   }
   return "dynamic_tool_call";
 }

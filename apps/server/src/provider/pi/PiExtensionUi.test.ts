@@ -13,6 +13,28 @@ const stamp = {
 };
 
 describe("PiExtensionUi", () => {
+  it("maps file-change confirms before generic file read approval", () => {
+    const events = mapPiExtensionUiRequestToRuntimeEvents({
+      stamp,
+      provider: ProviderDriverKind.make("piAgent"),
+      threadId: "thread-1" as never,
+      turnId: undefined,
+      event: {
+        type: "extension_ui_request",
+        id: "req-file-change",
+        method: "confirm",
+        title: "Allow file edit?",
+        message: "Patch src/index.ts",
+      },
+    });
+
+    expect(events).toHaveLength(1);
+    expect(events[0]?.type).toBe("request.opened");
+    if (events[0]?.type === "request.opened") {
+      expect(events[0].payload.requestType).toBe("file_change_approval");
+    }
+  });
+
   it("maps confirm dialogs to approval requests", () => {
     const events = mapPiExtensionUiRequestToRuntimeEvents({
       stamp,
