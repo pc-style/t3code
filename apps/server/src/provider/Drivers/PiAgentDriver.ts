@@ -44,6 +44,20 @@ const UPDATE = makePackageManagedProviderMaintenanceResolver({
   nativeUpdate: null,
 });
 
+export function buildPiContinuationGroupKey(input: {
+  readonly instanceId: ProviderInstance["instanceId"];
+  readonly configDir: string;
+  readonly sessionDir: string;
+}): string {
+  const identityStateParts = [
+    input.configDir.trim() ? `config:${input.configDir.trim()}` : null,
+    input.sessionDir.trim() ? `session:${input.sessionDir.trim()}` : null,
+  ].filter((part): part is string => part !== null);
+  const identitySuffix =
+    identityStateParts.length > 0 ? encodeURIComponent(identityStateParts.join("|")) : undefined;
+  return `piAgent:instance:${input.instanceId}${identitySuffix ? `:state:${identitySuffix}` : ""}`;
+}
+
 export type PiAgentDriverEnv =
   | ChildProcessSpawner.ChildProcessSpawner
   | FileSystem.FileSystem
@@ -85,13 +99,13 @@ export const PiAgentDriver: ProviderDriver<PiAgentSettings, PiAgentDriverEnv> = 
         effectiveConfig,
         mergeProviderInstanceEnvironment(environment),
       );
-      const identitySuffix =
-        effectiveConfig.sessionDir.trim() || effectiveConfig.configDir.trim() || undefined;
       const continuationIdentity = {
         driverKind: DRIVER_KIND,
-        continuationKey: `piAgent:instance:${instanceId}${
-          identitySuffix ? `:state:${identitySuffix}` : ""
-        }`,
+        continuationKey: buildPiContinuationGroupKey({
+          instanceId,
+          configDir: effectiveConfig.configDir,
+          sessionDir: effectiveConfig.sessionDir,
+        }),
       };
       const stampIdentity = withInstanceIdentity({
         instanceId,

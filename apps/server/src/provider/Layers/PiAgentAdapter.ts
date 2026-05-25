@@ -734,21 +734,19 @@ export const makePiAgentAdapter = (
             );
         }
 
-        const promptText = withPlanModeInstruction(
-          input.input?.trim() ?? "",
-          input.interactionMode,
-        );
+        const userText = input.input?.trim() ?? "";
         const images = yield* buildPromptImages({
           threadId: input.threadId,
           attachments: input.attachments,
         });
-        if (!promptText && images.length === 0) {
+        if (!userText && images.length === 0) {
           return yield* new ProviderAdapterValidationError({
             provider: PROVIDER,
             operation: "sendTurn",
             issue: "Turn requires non-empty text or attachments.",
           });
         }
+        const promptText = withPlanModeInstruction(userText, input.interactionMode);
 
         const streamingState = yield* ctx.runtime
           .getState()

@@ -1,4 +1,8 @@
-import { type PiAgentSettings, type ServerProviderModel } from "@t3tools/contracts";
+import {
+  type PiAgentSettings,
+  type ServerProviderModel,
+  type ServerProviderSlashCommand,
+} from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -24,6 +28,12 @@ const PI_PRESENTATION = {
   displayName: "Pi",
   showInteractionModeToggle: true,
 } as const;
+const PI_SLASH_COMMANDS: ReadonlyArray<ServerProviderSlashCommand> = [
+  {
+    name: "login",
+    description: "Open Pi's provider login flow inside this session.",
+  },
+];
 
 const DEFAULT_PI_MODEL_CAPABILITIES = createModelCapabilities({ optionDescriptors: [] });
 
@@ -50,12 +60,26 @@ const BUILTIN_PI_MODELS: ReadonlyArray<ServerProviderModel> = [
 
 const PI_AUTH_ENV_BY_PROVIDER: Record<string, readonly string[]> = {
   anthropic: ["ANTHROPIC_API_KEY"],
+  azure: ["AZURE_OPENAI_API_KEY", "AZURE_API_KEY"],
+  "azure-openai": ["AZURE_OPENAI_API_KEY", "AZURE_API_KEY"],
+  bedrock: ["AWS_ACCESS_KEY_ID", "AWS_PROFILE", "AWS_WEB_IDENTITY_TOKEN_FILE"],
+  cerebras: ["CEREBRAS_API_KEY"],
+  cohere: ["COHERE_API_KEY"],
+  deepseek: ["DEEPSEEK_API_KEY"],
+  fireworks: ["FIREWORKS_API_KEY"],
+  "github-copilot": ["GITHUB_TOKEN", "GH_TOKEN"],
   openai: ["OPENAI_API_KEY"],
+  "openai-compatible": ["OPENAI_API_KEY"],
   "opencode-go": ["OPENCODE_GO_API_KEY", "OPENCODE_API_KEY"],
   google: ["GOOGLE_GENERATIVE_AI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"],
   gemini: ["GEMINI_API_KEY", "GOOGLE_GENERATIVE_AI_API_KEY", "GOOGLE_API_KEY"],
   groq: ["GROQ_API_KEY"],
+  mistral: ["MISTRAL_API_KEY"],
   openrouter: ["OPENROUTER_API_KEY"],
+  perplexity: ["PERPLEXITY_API_KEY"],
+  together: ["TOGETHER_API_KEY"],
+  vertex: ["GOOGLE_APPLICATION_CREDENTIALS", "GOOGLE_CLOUD_PROJECT"],
+  xai: ["XAI_API_KEY"],
 };
 
 export function parsePiModelSlug(
@@ -86,6 +110,21 @@ function buildPiProviderModels(
   });
 }
 
+function defaultPiProviderAuthEnv(provider: string): string | undefined {
+  const normalized = provider
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/gu, "_")
+    .replace(/^_+|_+$/gu, "");
+  return normalized ? `${normalized}_API_KEY` : undefined;
+}
+
+function piAuthEnvNamesForProvider(provider: string): ReadonlyArray<string> {
+  const configured = PI_AUTH_ENV_BY_PROVIDER[provider] ?? [];
+  const fallback = defaultPiProviderAuthEnv(provider);
+  return fallback ? [...configured, fallback] : configured;
+}
+
 export function resolvePiAuthStatus(input: {
   readonly models: ReadonlyArray<ServerProviderModel>;
   readonly environment: NodeJS.ProcessEnv;
@@ -95,7 +134,7 @@ export function resolvePiAuthStatus(input: {
       .map((model) => parsePiModelSlug(model.slug)?.provider)
       .filter((provider): provider is string => typeof provider === "string"),
   );
-  const envNames = [...providers].flatMap((provider) => PI_AUTH_ENV_BY_PROVIDER[provider] ?? []);
+  const envNames = [...providers].flatMap(piAuthEnvNamesForProvider);
   const uniqueEnvNames = [...new Set(envNames)];
   if (uniqueEnvNames.length === 0) {
     return { status: "unknown" as const };
@@ -129,6 +168,7 @@ export const makePendingPiAgentProvider = (
         enabled: false,
         checkedAt,
         models,
+        slashCommands: PI_SLASH_COMMANDS,
         probe: {
           installed: false,
           version: null,
@@ -145,6 +185,7 @@ export const makePendingPiAgentProvider = (
       enabled: true,
       checkedAt,
       models,
+      slashCommands: PI_SLASH_COMMANDS,
       probe: {
         installed: false,
         version: null,
@@ -169,6 +210,7 @@ export const checkPiAgentProviderStatus = Effect.fn("checkPiAgentProviderStatus"
       enabled: false,
       checkedAt,
       models,
+      slashCommands: PI_SLASH_COMMANDS,
       probe: {
         installed: false,
         version: null,
@@ -198,6 +240,7 @@ export const checkPiAgentProviderStatus = Effect.fn("checkPiAgentProviderStatus"
       enabled: true,
       checkedAt,
       models,
+      slashCommands: PI_SLASH_COMMANDS,
       probe: {
         installed: false,
         version: null,
@@ -215,6 +258,7 @@ export const checkPiAgentProviderStatus = Effect.fn("checkPiAgentProviderStatus"
       enabled: true,
       checkedAt,
       models,
+      slashCommands: PI_SLASH_COMMANDS,
       probe: {
         installed: true,
         version: null,
@@ -234,6 +278,7 @@ export const checkPiAgentProviderStatus = Effect.fn("checkPiAgentProviderStatus"
       enabled: true,
       checkedAt,
       models,
+      slashCommands: PI_SLASH_COMMANDS,
       probe: {
         installed: true,
         version: parsedVersion,
@@ -269,6 +314,7 @@ export const checkPiAgentProviderStatus = Effect.fn("checkPiAgentProviderStatus"
     enabled: true,
     checkedAt,
     models: resolvedModels,
+    slashCommands: PI_SLASH_COMMANDS,
     probe: {
       installed: true,
       version: parsedVersion,
@@ -279,7 +325,7 @@ export const checkPiAgentProviderStatus = Effect.fn("checkPiAgentProviderStatus"
           ? "Pi Agent CLI is installed, but no matching provider credential environment variable was detected."
           : resolvedModels.length > models.length
             ? `Pi Agent CLI is installed. Discovered ${resolvedModels.length} models via \`pi --list-models\`.`
-            : "Pi Agent CLI is installed. Authenticate with provider API keys or run `pi /login` in a terminal.",
+            : "Pi Agent CLI is installed and provider credentials were detected.",
     },
   });
 });

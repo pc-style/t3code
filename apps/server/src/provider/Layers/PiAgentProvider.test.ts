@@ -35,6 +35,10 @@ describe("Pi provider snapshots", () => {
     expect(snapshot.status).toBe("disabled");
     expect(snapshot.showInteractionModeToggle).toBe(true);
     expect(snapshot.models.map((model) => model.slug)).toContain("anthropic/claude-sonnet-4-6");
+    expect(snapshot.slashCommands).toContainEqual({
+      name: "login",
+      description: "Open Pi's provider login flow inside this session.",
+    });
     expect(snapshot.versionAdvisory).toBeDefined();
   });
 
@@ -92,7 +96,23 @@ describe("resolvePiAuthStatus", () => {
     ).toMatchObject({ status: "unauthenticated", type: "environment" });
   });
 
-  it("keeps unknown auth when model providers do not map to known env vars", () => {
+  it("supports custom Pi providers with derived API key env names", () => {
+    expect(
+      resolvePiAuthStatus({
+        models: [
+          {
+            slug: "private-provider/custom",
+            name: "Custom",
+            isCustom: true,
+            capabilities: EMPTY_CAPABILITIES,
+          },
+        ],
+        environment: { PRIVATE_PROVIDER_API_KEY: "secret" },
+      }),
+    ).toMatchObject({ status: "authenticated", label: "Detected PRIVATE_PROVIDER_API_KEY" });
+  });
+
+  it("returns unauthenticated for custom Pi providers when derived credentials are missing", () => {
     expect(
       resolvePiAuthStatus({
         models: [
@@ -105,6 +125,9 @@ describe("resolvePiAuthStatus", () => {
         ],
         environment: {},
       }),
-    ).toEqual({ status: "unknown" });
+    ).toMatchObject({
+      status: "unauthenticated",
+      label: "Set one of PRIVATE_PROVIDER_API_KEY for the configured Pi models.",
+    });
   });
 });
