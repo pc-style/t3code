@@ -1,8 +1,8 @@
 > [!IMPORTANT]
-> **Archived upstream fork/reference.** This repository is archived and retained only as an upstream reference; do not use it for new work.
+> **Archive pending. Do not use this repository for new work.** This upstream fork/reference is scheduled for archive once repository administration permission is available.
 >
 > **Upstream:** [pingdotgg/t3code](https://github.com/pingdotgg/t3code)  
-> **Maintained pc-style delta:** **none** (the only pc-style commit is this archive notice).  
+> **Maintained pc-style delta:** **none** (apart from repository-status notices).  
 > The upstream history and MIT License and provenance notices are preserved. Use the upstream repository for current code, releases, issues, and security updates.
 
 ---
