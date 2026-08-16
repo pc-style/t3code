@@ -1,3 +1,12 @@
+> [!IMPORTANT]
+> **Archived upstream fork/reference.** This repository is archived and retained only as an upstream reference; do not use it for new work.
+>
+> **Upstream:** [pingdotgg/t3code](https://github.com/pingdotgg/t3code)  
+> **Maintained pc-style delta:** **none** (the only pc-style commit is this archive notice).  
+> The upstream history and MIT License and provenance notices are preserved. Use the upstream repository for current code, releases, issues, and security updates.
+
+---
+
 # T3 Code
 
 T3 Code is a minimal web GUI for coding agents (currently Codex, Claude, Cursor, and OpenCode, more coming soon).
