@@ -214,4 +214,65 @@ it.layer(NodeServices.layer)("decider deletion flows", (it) => {
       expect(normalizeDeleteEvent(forcedResult)).toEqual(normalizeDeleteEvent(sequentialEvents));
     }),
   );
+
+  it.effect("allows re-creating a thread id after its thread was deleted", () =>
+    Effect.gen(function* () {
+      const now = "2026-01-01T00:00:00.000Z";
+      const readModel = yield* seedReadModel;
+
+      const deleted = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.delete",
+          commandId: asCommandId("cmd-thread-delete-1"),
+          threadId: asThreadId("thread-delete-1"),
+        },
+        readModel,
+      });
+      const deletedEvents = Array.isArray(deleted) ? deleted : [deleted];
+      let nextReadModel = readModel;
+      let nextSequence = readModel.snapshotSequence;
+      for (const event of deletedEvents) {
+        nextSequence += 1;
+        nextReadModel = yield* projectEvent(nextReadModel, {
+          ...event,
+          sequence: nextSequence,
+        });
+      }
+
+      const recreated = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.create",
+          commandId: asCommandId("cmd-thread-recreate-1"),
+          threadId: asThreadId("thread-delete-1"),
+          projectId: asProjectId("project-delete"),
+          title: "Thread Delete 1 retry",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          branch: null,
+          worktreePath: null,
+          createdAt: now,
+        },
+        readModel: nextReadModel,
+      });
+      const recreatedEvents = Array.isArray(recreated) ? recreated : [recreated];
+      expect(recreatedEvents.map((event) => event.type)).toEqual(["thread.created"]);
+
+      for (const event of recreatedEvents) {
+        nextSequence += 1;
+        nextReadModel = yield* projectEvent(nextReadModel, {
+          ...event,
+          sequence: nextSequence,
+        });
+      }
+      const resurrected = nextReadModel.threads.find(
+        (thread) => thread.id === asThreadId("thread-delete-1"),
+      );
+      expect(resurrected?.deletedAt).toBeNull();
+      expect(resurrected?.title).toBe("Thread Delete 1 retry");
+    }),
+  );
 });

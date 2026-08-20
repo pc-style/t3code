@@ -102,6 +102,31 @@ const readModel: OrchestrationReadModel = {
       checkpoints: [],
       deletedAt: null,
     },
+    {
+      id: ThreadId.make("thread-deleted"),
+      projectId: ProjectId.make("project-a"),
+      title: "Deleted thread",
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5-codex",
+      },
+      interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+      runtimeMode: "full-access",
+      branch: null,
+      worktreePath: null,
+      createdAt: now,
+      updatedAt: now,
+      archivedAt: null,
+      settledOverride: null,
+      settledAt: null,
+      latestTurn: null,
+      messages: [],
+      session: null,
+      activities: [],
+      proposedPlans: [],
+      checkpoints: [],
+      deletedAt: now,
+    },
   ],
 };
 
@@ -198,5 +223,30 @@ describe("commandInvariants", () => {
         }),
       ),
     ).rejects.toThrow("already exists");
+  });
+
+  it("treats a soft-deleted thread as absent so its id can be re-created", async () => {
+    await Effect.runPromise(
+      requireThreadAbsent({
+        readModel,
+        command: {
+          type: "thread.create",
+          commandId: CommandId.make("cmd-4"),
+          threadId: ThreadId.make("thread-deleted"),
+          projectId: ProjectId.make("project-a"),
+          title: "retry",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "full-access",
+          branch: null,
+          worktreePath: null,
+          createdAt: now,
+        },
+        threadId: ThreadId.make("thread-deleted"),
+      }),
+    );
   });
 });
