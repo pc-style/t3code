@@ -3,8 +3,13 @@ import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
+import {
+  type ProjectionThread,
+  ProjectionThreadRepository,
+} from "../../persistence/Services/ProjectionThreads.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import * as TerminalManager from "../../terminal/Manager.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
@@ -37,10 +42,17 @@ export const logCleanupCauseUnlessInterrupted = <R, E>({
     }),
   );
 
+// Session stop and terminal close key on threadId alone, and a draft retry can
+// re-create a deleted thread id before its queued cleanup runs. A live row
+// means those resources now belong to the new incarnation.
+export const shouldSkipThreadDeletionCleanup = (thread: Option.Option<ProjectionThread>): boolean =>
+  Option.isSome(thread) && thread.value.deletedAt === null;
+
 const make = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
   const providerService = yield* ProviderService;
   const terminalManager = yield* TerminalManager.TerminalManager;
+  const projectionThreadRepository = yield* ProjectionThreadRepository;
 
   const stopProviderSession = (threadId: ThreadDeletedEvent["payload"]["threadId"]) =>
     logCleanupCauseUnlessInterrupted({
@@ -60,6 +72,13 @@ const make = Effect.gen(function* () {
     event: ThreadDeletedEvent,
   ) {
     const { threadId } = event.payload;
+    const thread = yield* projectionThreadRepository
+      .getById({ threadId })
+      .pipe(Effect.orElseSucceed(() => Option.none<ProjectionThread>()));
+    if (shouldSkipThreadDeletionCleanup(thread)) {
+      yield* Effect.logDebug("thread deletion cleanup skipped a re-created thread", { threadId });
+      return;
+    }
     yield* stopProviderSession(threadId);
     yield* closeThreadTerminals(threadId);
   });
