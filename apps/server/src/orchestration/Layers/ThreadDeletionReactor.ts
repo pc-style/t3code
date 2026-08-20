@@ -72,9 +72,7 @@ const make = Effect.gen(function* () {
     event: ThreadDeletedEvent,
   ) {
     const { threadId } = event.payload;
-    const thread = yield* projectionThreadRepository
-      .getById({ threadId })
-      .pipe(Effect.orElseSucceed(() => Option.none<ProjectionThread>()));
+    const thread = yield* projectionThreadRepository.getById({ threadId });
     if (shouldSkipThreadDeletionCleanup(thread)) {
       yield* Effect.logDebug("thread deletion cleanup skipped a re-created thread", { threadId });
       return;
