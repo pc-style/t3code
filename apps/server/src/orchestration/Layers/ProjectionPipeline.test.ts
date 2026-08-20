@@ -2789,4 +2789,252 @@ engineLayer("OrchestrationProjectionPipeline via engine dispatch", (it) => {
       ]);
     }),
   );
+
+  it.effect("re-creating a deleted thread id purges the old incarnation's projections", () =>
+    Effect.gen(function* () {
+      const engine = yield* OrchestrationEngineService;
+      const sql = yield* SqlClient.SqlClient;
+      const createdAt = "2026-01-01T00:00:00.000Z";
+      const modelSelection = {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5-codex",
+      };
+
+      yield* engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.make("cmd-recreate-project"),
+        projectId: ProjectId.make("project-recreate"),
+        title: "Recreate Project",
+        workspaceRoot: "/tmp/project-recreate",
+        defaultModelSelection: modelSelection,
+        createdAt,
+      });
+      yield* engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-recreate-thread-1"),
+        threadId: ThreadId.make("thread-recreate"),
+        projectId: ProjectId.make("project-recreate"),
+        title: "First incarnation",
+        modelSelection,
+        interactionMode: "default",
+        runtimeMode: "full-access",
+        branch: null,
+        worktreePath: null,
+        createdAt,
+      });
+      yield* engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-recreate-turn-1"),
+        threadId: ThreadId.make("thread-recreate"),
+        message: {
+          messageId: MessageId.make("msg-recreate-1"),
+          role: "user",
+          text: "old message",
+          attachments: [],
+        },
+        interactionMode: "default",
+        runtimeMode: "full-access",
+        createdAt,
+      });
+      yield* engine.dispatch({
+        type: "thread.delete",
+        commandId: CommandId.make("cmd-recreate-delete"),
+        threadId: ThreadId.make("thread-recreate"),
+      });
+
+      yield* engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-recreate-thread-2"),
+        threadId: ThreadId.make("thread-recreate"),
+        projectId: ProjectId.make("project-recreate"),
+        title: "Second incarnation",
+        modelSelection,
+        interactionMode: "default",
+        runtimeMode: "full-access",
+        branch: null,
+        worktreePath: null,
+        createdAt: "2026-01-01T00:00:01.000Z",
+      });
+
+      const threadRows = yield* sql<{
+        readonly title: string;
+        readonly deletedAt: string | null;
+      }>`
+        SELECT
+          title,
+          deleted_at AS "deletedAt"
+        FROM projection_threads
+        WHERE thread_id = 'thread-recreate'
+      `;
+      assert.deepEqual(threadRows, [{ title: "Second incarnation", deletedAt: null }]);
+
+      const messageRows = yield* sql<{ readonly messageId: string }>`
+        SELECT message_id AS "messageId"
+        FROM projection_thread_messages
+        WHERE thread_id = 'thread-recreate'
+      `;
+      assert.deepEqual(messageRows, []);
+
+      const turnRows = yield* sql<{ readonly threadId: string }>`
+        SELECT thread_id AS "threadId"
+        FROM projection_turns
+        WHERE thread_id = 'thread-recreate'
+      `;
+      assert.deepEqual(turnRows, []);
+    }),
+  );
 });
+
+it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-recreate-replay-")))(
+  "OrchestrationProjectionPipeline",
+  (it) => {
+    it.effect("per-projector replay keeps the new incarnation's rows after a re-create", () =>
+      Effect.gen(function* () {
+        const projectionPipeline = yield* OrchestrationProjectionPipeline;
+        const eventStore = yield* OrchestrationEventStore;
+        const sql = yield* SqlClient.SqlClient;
+        const now = "2026-01-01T00:00:00.000Z";
+        const modelSelection = {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        };
+        const threadCreatedPayload = {
+          threadId: ThreadId.make("thread-replay"),
+          projectId: ProjectId.make("project-replay"),
+          modelSelection,
+          runtimeMode: "full-access" as const,
+          branch: null,
+          worktreePath: null,
+          createdAt: now,
+          updatedAt: now,
+        };
+
+        yield* eventStore.append({
+          type: "project.created",
+          eventId: EventId.make("evt-replay-project"),
+          aggregateKind: "project",
+          aggregateId: ProjectId.make("project-replay"),
+          occurredAt: now,
+          commandId: CommandId.make("cmd-replay-project"),
+          causationEventId: null,
+          correlationId: CommandId.make("cmd-replay-project"),
+          metadata: {},
+          payload: {
+            projectId: ProjectId.make("project-replay"),
+            title: "Replay Project",
+            workspaceRoot: "/tmp/project-replay",
+            defaultModelSelection: null,
+            scripts: [],
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+        yield* eventStore.append({
+          type: "thread.created",
+          eventId: EventId.make("evt-replay-create-1"),
+          aggregateKind: "thread",
+          aggregateId: ThreadId.make("thread-replay"),
+          occurredAt: now,
+          commandId: CommandId.make("cmd-replay-create-1"),
+          causationEventId: null,
+          correlationId: CommandId.make("cmd-replay-create-1"),
+          metadata: {},
+          payload: { ...threadCreatedPayload, title: "First incarnation" },
+        });
+        yield* eventStore.append({
+          type: "thread.message-sent",
+          eventId: EventId.make("evt-replay-msg-old"),
+          aggregateKind: "thread",
+          aggregateId: ThreadId.make("thread-replay"),
+          occurredAt: now,
+          commandId: CommandId.make("cmd-replay-msg-old"),
+          causationEventId: null,
+          correlationId: CommandId.make("cmd-replay-msg-old"),
+          metadata: {},
+          payload: {
+            threadId: ThreadId.make("thread-replay"),
+            messageId: MessageId.make("msg-replay-old"),
+            role: "user",
+            text: "old incarnation",
+            turnId: null,
+            streaming: false,
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+        yield* eventStore.append({
+          type: "thread.deleted",
+          eventId: EventId.make("evt-replay-delete"),
+          aggregateKind: "thread",
+          aggregateId: ThreadId.make("thread-replay"),
+          occurredAt: now,
+          commandId: CommandId.make("cmd-replay-delete"),
+          causationEventId: null,
+          correlationId: CommandId.make("cmd-replay-delete"),
+          metadata: {},
+          payload: {
+            threadId: ThreadId.make("thread-replay"),
+            deletedAt: now,
+          },
+        });
+        yield* eventStore.append({
+          type: "thread.created",
+          eventId: EventId.make("evt-replay-create-2"),
+          aggregateKind: "thread",
+          aggregateId: ThreadId.make("thread-replay"),
+          occurredAt: now,
+          commandId: CommandId.make("cmd-replay-create-2"),
+          causationEventId: null,
+          correlationId: CommandId.make("cmd-replay-create-2"),
+          metadata: {},
+          payload: { ...threadCreatedPayload, title: "Second incarnation" },
+        });
+        yield* eventStore.append({
+          type: "thread.message-sent",
+          eventId: EventId.make("evt-replay-msg-new"),
+          aggregateKind: "thread",
+          aggregateId: ThreadId.make("thread-replay"),
+          occurredAt: now,
+          commandId: CommandId.make("cmd-replay-msg-new"),
+          causationEventId: null,
+          correlationId: CommandId.make("cmd-replay-msg-new"),
+          metadata: {},
+          payload: {
+            threadId: ThreadId.make("thread-replay"),
+            messageId: MessageId.make("msg-replay-new"),
+            role: "user",
+            text: "new incarnation",
+            turnId: null,
+            streaming: false,
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+
+        // Per-projector replay applies the whole log for each projector in
+        // turn, threads last. Rows the message projector rebuilt for the new
+        // incarnation must survive the threads projector's pass.
+        yield* projectionPipeline.bootstrap;
+
+        const messageRows = yield* sql<{ readonly messageId: string }>`
+          SELECT message_id AS "messageId"
+          FROM projection_thread_messages
+          WHERE thread_id = 'thread-replay'
+        `;
+        assert.deepEqual(messageRows, [{ messageId: "msg-replay-new" }]);
+
+        const threadRows = yield* sql<{
+          readonly title: string;
+          readonly deletedAt: string | null;
+        }>`
+          SELECT
+            title,
+            deleted_at AS "deletedAt"
+          FROM projection_threads
+          WHERE thread_id = 'thread-replay'
+        `;
+        assert.deepEqual(threadRows, [{ title: "Second incarnation", deletedAt: null }]);
+      }),
+    );
+  },
+);
