@@ -1,8 +1,9 @@
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
-import type {
-  EnvironmentId,
-  ProjectListEntriesResult,
-  ProjectReadFileResult,
+import {
+  type EnvironmentId,
+  type ProjectListEntriesResult,
+  ProjectReadFileError,
+  type ProjectReadFileResult,
 } from "@t3tools/contracts";
 import {
   isWorkspaceImagePreviewPath,
@@ -10,6 +11,7 @@ import {
 } from "@t3tools/shared/filePreview";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useCallback } from "react";
 
@@ -31,6 +33,11 @@ interface ProjectQueryState<A> {
   readonly error: string | null;
   readonly isPending: boolean;
   readonly refresh: () => void;
+}
+
+interface ProjectFileQueryState extends ProjectQueryState<ProjectReadFileResult> {
+  /** The path exists but is not a regular file, typically a directory. */
+  readonly isNotFile: boolean;
 }
 
 function getProjectEntriesQueryAtom(environmentId: EnvironmentId, cwd: string) {
@@ -125,6 +132,14 @@ function errorMessage<A>(result: AsyncResult.AsyncResult<A, unknown>): string | 
   return cause instanceof Error ? cause.message : "Workspace query failed.";
 }
 
+const isProjectReadFileError = Schema.is(ProjectReadFileError);
+
+function isNotFileFailure<A>(result: AsyncResult.AsyncResult<A, unknown>): boolean {
+  if (result._tag !== "Failure") return false;
+  const cause = Cause.squash(result.cause);
+  return isProjectReadFileError(cause) && cause.failure === "path_not_file";
+}
+
 export function useProjectEntriesQuery(
   environmentId: EnvironmentId,
   cwd: string,
@@ -181,7 +196,7 @@ export function useProjectFileQuery(
   cwd: string,
   relativePath: string | null,
   enabled = true,
-): ProjectQueryState<ProjectReadFileResult> {
+): ProjectFileQueryState {
   const isMedia =
     relativePath !== null &&
     (isWorkspaceImagePreviewPath(relativePath) || isWorkspaceVideoPreviewPath(relativePath));
@@ -201,6 +216,7 @@ export function useProjectFileQuery(
   return {
     data: optimisticFile?.data ?? data,
     error: errorMessage(result),
+    isNotFile: isNotFileFailure(result),
     isPending: result.waiting,
     refresh,
   };

@@ -6,7 +6,6 @@ import {
   remapFileCommentAnnotations,
 } from "./fileCommentAnnotations";
 import {
-  isDirectoryEntry,
   isMarkdownPreviewFile,
   setMarkdownTaskChecked,
   shouldShowFileExplorer,
@@ -119,24 +118,5 @@ describe("setMarkdownTaskChecked", () => {
   it("leaves the document unchanged for a stale or invalid marker offset", () => {
     expect(setMarkdownTaskChecked(markdown, 0, true)).toBe(markdown);
     expect(setMarkdownTaskChecked(markdown, 200, true)).toBe(markdown);
-  });
-});
-
-describe("isDirectoryEntry", () => {
-  const entries = [
-    { kind: "directory" as const, path: ".agents" },
-    { kind: "directory" as const, path: ".agents/skills" },
-    { kind: "file" as const, path: ".agents/skills/SKILL.md" },
-  ];
-
-  it("recognizes a listed directory with or without a trailing slash", () => {
-    expect(isDirectoryEntry(entries, ".agents/skills")).toBe(true);
-    expect(isDirectoryEntry(entries, ".agents/skills/")).toBe(true);
-  });
-
-  it("does not treat files or unknown paths as directories", () => {
-    expect(isDirectoryEntry(entries, ".agents/skills/SKILL.md")).toBe(false);
-    expect(isDirectoryEntry(entries, "missing")).toBe(false);
-    expect(isDirectoryEntry(undefined, ".agents")).toBe(false);
   });
 });

@@ -68,7 +68,6 @@ import { resolveCenteredFileLineScrollTop } from "./fileLineReveal";
 import { DiffCommentAnnotation } from "../diffs/DiffCommentAnnotation";
 import { projectFileCacheKey, projectFileEditorCacheKey } from "./fileContentRevision";
 import {
-  isDirectoryEntry,
   isMarkdownPreviewFile,
   setMarkdownTaskChecked,
   shouldShowFileExplorer,
@@ -77,7 +76,6 @@ import { useFileSaveCoordinator } from "./useFileSaveCoordinator";
 import {
   getOptimisticProjectFileQueryData,
   setProjectFileQueryData,
-  useProjectEntriesQuery,
   useProjectFileQuery,
 } from "./projectFilesQueryState";
 
@@ -958,7 +956,7 @@ export default function FilePreviewPanel({
   environmentId,
   cwd,
   projectName,
-  relativePath: selectedPath,
+  relativePath,
   attachment,
   threadRef,
   composerDraftTarget,
@@ -982,15 +980,6 @@ export default function FilePreviewPanel({
   const openPreview = useAtomCommand(previewEnvironment.open, {
     reportFailure: false,
   });
-  // A chat link cannot tell a folder from a file, so a folder arrives as a file
-  // surface. The tree already knows every entry; a folder is revealed there
-  // and gets no preview pane instead of a read error.
-  const entries = useProjectEntriesQuery(environmentId, cwd);
-  const isDirectory =
-    selectedPath !== null &&
-    attachment === undefined &&
-    isDirectoryEntry(entries.data?.entries, selectedPath);
-  const relativePath = isDirectory ? null : selectedPath;
   const isVideo = relativePath !== null && isWorkspaceVideoPreviewPath(relativePath);
   const isImage = relativePath !== null && !isVideo && isWorkspaceImagePreviewPath(relativePath);
   const isMedia = isImage || isVideo;
@@ -1006,12 +995,18 @@ export default function FilePreviewPanel({
     relativePath,
     attachment === undefined && !isMedia && !isPdf,
   );
+  // A chat link cannot tell a folder from a file, so a folder arrives here as
+  // a file surface and the read fails. Keep the breadcrumbs, drop the preview
+  // pane, and let the tree fill the surface with the folder revealed.
+  const isDirectory = file.isNotFile;
   const [explorerOpen, setExplorerOpen] = useState(initialExplorerOpen);
-  const showExplorer = shouldShowFileExplorer({
-    relativePath,
-    explorerOpen,
-    attachmentOpen: attachment !== undefined,
-  });
+  const showExplorer =
+    isDirectory ||
+    shouldShowFileExplorer({
+      relativePath,
+      explorerOpen,
+      attachmentOpen: attachment !== undefined,
+    });
   // Reading markdown rendered is a preference, not a property of one file. Keeping
   // it on the panel meant a thread switch dropped it and forced source back.
   const [renderMarkdownPreferred, setRenderMarkdownPreferred] = useLocalStorage(
@@ -1058,6 +1053,7 @@ export default function FilePreviewPanel({
       relativePath !== null &&
       !isMedia &&
       !isPdf &&
+      !isDirectory &&
       !selectedFilePending,
     mutationId: workspaceMutationId,
     refresh: file.refresh,
@@ -1233,7 +1229,7 @@ export default function FilePreviewPanel({
         <div
           className={cn(
             "min-w-0 flex-1 flex-col overflow-hidden",
-            relativePath ? "flex" : "hidden",
+            relativePath && !isDirectory ? "flex" : "hidden",
           )}
         >
           {relativePath && attachment ? (
@@ -1343,7 +1339,7 @@ export default function FilePreviewPanel({
           <aside
             className={cn(
               "flex min-h-0 shrink-0 bg-background",
-              relativePath
+              relativePath && !isDirectory
                 ? "w-[min(22rem,46%)] min-w-64 border-l border-border/60"
                 : "min-w-0 flex-1",
             )}
@@ -1353,11 +1349,11 @@ export default function FilePreviewPanel({
               environmentId={environmentId}
               cwd={cwd}
               projectName={projectName}
-              selectedPath={selectedPath}
+              selectedPath={relativePath}
               selectedPathRevealId={revealRequestId}
               onOpenFile={onOpenFile}
               workspaceMutationId={workspaceMutationId}
-              {...(relativePath && !isMedia && !isPdf
+              {...(relativePath && !isMedia && !isPdf && !isDirectory
                 ? { onRefreshSelectedFile: file.refresh }
                 : {})}
             />
