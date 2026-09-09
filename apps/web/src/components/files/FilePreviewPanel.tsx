@@ -1035,12 +1035,13 @@ export default function FilePreviewPanel({
     (handledReveal?.path === relativePath && handledReveal.requestId === revealRequestId);
   const renderMarkdown = isMarkdown && renderMarkdownPreferred && revealHandled;
   const renderBrowserFile = isPdf || (isHtml && renderBrowserFilePreferred && revealHandled);
-  const canToggleRendered = attachment === undefined && (isMarkdown || isHtml);
+  const canToggleRendered = !isDirectory && attachment === undefined && (isMarkdown || isHtml);
   const rendered = isMarkdown ? renderMarkdown : renderBrowserFile;
   const setRenderedPreferred = isMarkdown
     ? setRenderMarkdownPreferred
     : setRenderBrowserFilePreferred;
   const canOpenInBrowser =
+    !isDirectory &&
     relativePath !== null &&
     attachment === undefined &&
     !isVideo &&
