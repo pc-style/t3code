@@ -1198,7 +1198,7 @@ export default function FilePreviewPanel({
               <TooltipPopup>Open file in preview browser</TooltipPopup>
             </Tooltip>
           ) : null}
-          {!isHostFile ? (
+          {!isHostFile && !isDirectory ? (
             <Tooltip>
               <TooltipTrigger
                 render={
