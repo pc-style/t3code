@@ -998,8 +998,9 @@ export default function FilePreviewPanel({
   // A chat link cannot tell a folder from a file, so a folder arrives here as
   // a file surface and the read fails. Keep the breadcrumbs, drop the preview
   // pane, and let the tree fill the surface with the folder revealed. Mutation
-  // refresh stays on so the surface notices if the path becomes a file.
-  const isDirectory = file.isNotFile;
+  // refresh stays on so the surface notices if the path becomes a file. A host
+  // path cannot be revealed in the workspace tree, so it keeps the read error.
+  const isDirectory = file.isNotFile && !isHostFile;
   const [explorerOpen, setExplorerOpen] = useState(initialExplorerOpen);
   const showExplorer =
     isDirectory ||

@@ -487,9 +487,11 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               : next;
           }),
         ),
-      openFile: (ref, relativePath, line) =>
+      openFile: (ref, requestedPath, line) =>
         set((state) =>
           userAction(state, scopedThreadKey(ref), (current) => {
+            // A folder link may end in a slash; the tree keys folders without it.
+            const relativePath = requestedPath.replace(/\/+$/, "") || requestedPath;
             const withoutStandaloneExplorer = current.surfaces.filter(
               (surface) => surface.kind !== "files",
             );
