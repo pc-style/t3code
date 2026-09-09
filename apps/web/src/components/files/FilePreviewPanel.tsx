@@ -68,6 +68,7 @@ import { resolveCenteredFileLineScrollTop } from "./fileLineReveal";
 import { DiffCommentAnnotation } from "../diffs/DiffCommentAnnotation";
 import { projectFileCacheKey, projectFileEditorCacheKey } from "./fileContentRevision";
 import {
+  isDirectoryEntry,
   isMarkdownPreviewFile,
   setMarkdownTaskChecked,
   shouldShowFileExplorer,
@@ -76,6 +77,7 @@ import { useFileSaveCoordinator } from "./useFileSaveCoordinator";
 import {
   getOptimisticProjectFileQueryData,
   setProjectFileQueryData,
+  useProjectEntriesQuery,
   useProjectFileQuery,
 } from "./projectFilesQueryState";
 
@@ -956,7 +958,7 @@ export default function FilePreviewPanel({
   environmentId,
   cwd,
   projectName,
-  relativePath,
+  relativePath: selectedPath,
   attachment,
   threadRef,
   composerDraftTarget,
@@ -980,6 +982,15 @@ export default function FilePreviewPanel({
   const openPreview = useAtomCommand(previewEnvironment.open, {
     reportFailure: false,
   });
+  // A chat link cannot tell a folder from a file, so a folder arrives as a file
+  // surface. The tree already knows every entry; a folder is revealed there
+  // and gets no preview pane instead of a read error.
+  const entries = useProjectEntriesQuery(environmentId, cwd);
+  const isDirectory =
+    selectedPath !== null &&
+    attachment === undefined &&
+    isDirectoryEntry(entries.data?.entries, selectedPath);
+  const relativePath = isDirectory ? null : selectedPath;
   const isVideo = relativePath !== null && isWorkspaceVideoPreviewPath(relativePath);
   const isImage = relativePath !== null && !isVideo && isWorkspaceImagePreviewPath(relativePath);
   const isMedia = isImage || isVideo;
@@ -1342,7 +1353,7 @@ export default function FilePreviewPanel({
               environmentId={environmentId}
               cwd={cwd}
               projectName={projectName}
-              selectedPath={relativePath}
+              selectedPath={selectedPath}
               selectedPathRevealId={revealRequestId}
               onOpenFile={onOpenFile}
               workspaceMutationId={workspaceMutationId}

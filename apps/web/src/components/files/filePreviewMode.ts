@@ -13,6 +13,19 @@ export function shouldShowFileExplorer(input: {
   return input.explorerOpen || input.relativePath === null;
 }
 
+/** Whether a workspace path names a directory in the listed entries, with or without a trailing slash. */
+export function isDirectoryEntry(
+  entries:
+    | ReadonlyArray<{ readonly kind: "file" | "directory"; readonly path: string }>
+    | undefined,
+  relativePath: string,
+): boolean {
+  const normalizedPath = relativePath.replace(/\/+$/, "");
+  return (
+    entries?.some((entry) => entry.kind === "directory" && entry.path === normalizedPath) ?? false
+  );
+}
+
 export function setMarkdownTaskChecked(
   markdown: string,
   markerOffset: number,
