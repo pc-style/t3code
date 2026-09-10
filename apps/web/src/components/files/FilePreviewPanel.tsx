@@ -1001,14 +1001,14 @@ export default function FilePreviewPanel({
   // refresh stays on so the surface notices if the path becomes a file. A host
   // path cannot be revealed in the workspace tree, so it keeps the read error.
   const isDirectory = file.isNotFile && !isHostFile;
+  // Everything preview-related keys off previewPath; a folder has no preview.
+  const previewPath = isDirectory ? null : relativePath;
   const [explorerOpen, setExplorerOpen] = useState(initialExplorerOpen);
-  const showExplorer =
-    isDirectory ||
-    shouldShowFileExplorer({
-      relativePath,
-      explorerOpen,
-      attachmentOpen: attachment !== undefined,
-    });
+  const showExplorer = shouldShowFileExplorer({
+    relativePath: previewPath,
+    explorerOpen,
+    attachmentOpen: attachment !== undefined,
+  });
   // Reading markdown rendered is a preference, not a property of one file. Keeping
   // it on the panel meant a thread switch dropped it and forced source back.
   const [renderMarkdownPreferred, setRenderMarkdownPreferred] = useLocalStorage(
@@ -1028,25 +1028,24 @@ export default function FilePreviewPanel({
     null,
   );
   const breadcrumbRef = useRef<HTMLDivElement>(null);
-  const isMarkdown = relativePath ? isMarkdownPreviewFile(relativePath) : false;
+  const isMarkdown = previewPath ? isMarkdownPreviewFile(previewPath) : false;
   // A reveal still wins over the preference: the line only exists in the source.
   const revealHandled =
     revealLine === null ||
     (handledReveal?.path === relativePath && handledReveal.requestId === revealRequestId);
   const renderMarkdown = isMarkdown && renderMarkdownPreferred && revealHandled;
   const renderBrowserFile = isPdf || (isHtml && renderBrowserFilePreferred && revealHandled);
-  const canToggleRendered = !isDirectory && attachment === undefined && (isMarkdown || isHtml);
+  const canToggleRendered = attachment === undefined && (isMarkdown || isHtml);
   const rendered = isMarkdown ? renderMarkdown : renderBrowserFile;
   const setRenderedPreferred = isMarkdown
     ? setRenderMarkdownPreferred
     : setRenderBrowserFilePreferred;
   const canOpenInBrowser =
-    !isDirectory &&
-    relativePath !== null &&
+    previewPath !== null &&
     attachment === undefined &&
     !isVideo &&
     isPreviewSupportedInRuntime() &&
-    isBrowserPreviewFile(relativePath);
+    isBrowserPreviewFile(previewPath);
   const absolutePath =
     relativePath && attachment === undefined ? resolvePathLinkTarget(relativePath, cwd) : null;
   const onFilePostRender = useFileLineReveal(relativePath, revealLine, revealRequestId);
@@ -1199,7 +1198,7 @@ export default function FilePreviewPanel({
               <TooltipPopup>Open file in preview browser</TooltipPopup>
             </Tooltip>
           ) : null}
-          {!isHostFile && !isDirectory ? (
+          {!isHostFile && previewPath !== null ? (
             <Tooltip>
               <TooltipTrigger
                 render={
@@ -1222,17 +1221,14 @@ export default function FilePreviewPanel({
           ) : null}
         </div>
       ) : null}
-      {relativePath && !isMedia && !renderBrowserFile && file.data?.truncated ? (
+      {previewPath && !isMedia && !renderBrowserFile && file.data?.truncated ? (
         <div className="shrink-0 border-b border-warning/20 bg-warning-surface px-3 py-1.5 text-[11px] text-warning-foreground">
           Preview limited to the first 1 MB of a {file.data.byteLength.toLocaleString()} byte file.
         </div>
       ) : null}
       <div className="flex min-h-0 flex-1 overflow-hidden">
         <div
-          className={cn(
-            "min-w-0 flex-1 flex-col overflow-hidden",
-            relativePath && !isDirectory ? "flex" : "hidden",
-          )}
+          className={cn("min-w-0 flex-1 flex-col overflow-hidden", previewPath ? "flex" : "hidden")}
         >
           {relativePath && attachment ? (
             <AttachmentBrowserPreview environmentId={environmentId} attachment={attachment} />
@@ -1341,7 +1337,7 @@ export default function FilePreviewPanel({
           <aside
             className={cn(
               "flex min-h-0 shrink-0 bg-background",
-              relativePath && !isDirectory
+              previewPath
                 ? "w-[min(22rem,46%)] min-w-64 border-l border-border/60"
                 : "min-w-0 flex-1",
             )}
@@ -1355,7 +1351,7 @@ export default function FilePreviewPanel({
               selectedPathRevealId={revealRequestId}
               onOpenFile={onOpenFile}
               workspaceMutationId={workspaceMutationId}
-              {...(relativePath && !isMedia && !isPdf && !isDirectory
+              {...(previewPath && !isMedia && !isPdf
                 ? { onRefreshSelectedFile: file.refresh }
                 : {})}
             />

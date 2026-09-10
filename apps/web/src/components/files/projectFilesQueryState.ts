@@ -126,19 +126,16 @@ export function clearProjectFileQueryData(
   appAtomRegistry.set(optimisticFileAtom(environmentId, cwd, relativePath), null);
 }
 
-function errorMessage<A>(result: AsyncResult.AsyncResult<A, unknown>): string | null {
-  if (result._tag !== "Failure") return null;
-  const cause = Cause.squash(result.cause);
+function failureCause<A>(result: AsyncResult.AsyncResult<A, unknown>): unknown {
+  return result._tag === "Failure" ? Cause.squash(result.cause) : null;
+}
+
+function errorMessage(cause: unknown): string | null {
+  if (cause === null) return null;
   return cause instanceof Error ? cause.message : "Workspace query failed.";
 }
 
 const isProjectReadFileError = Schema.is(ProjectReadFileError);
-
-function isNotFileFailure<A>(result: AsyncResult.AsyncResult<A, unknown>): boolean {
-  if (result._tag !== "Failure") return false;
-  const cause = Cause.squash(result.cause);
-  return isProjectReadFileError(cause) && cause.failure === "path_not_file";
-}
 
 export function useProjectEntriesQuery(
   environmentId: EnvironmentId,
@@ -150,7 +147,7 @@ export function useProjectEntriesQuery(
   const refresh = useCallback(() => refreshAtom(), [refreshAtom]);
   return {
     data: Option.getOrNull(AsyncResult.value(result)),
-    error: errorMessage(result),
+    error: errorMessage(failureCause(result)),
     isPending: result.waiting,
     refresh,
   };
@@ -212,11 +209,12 @@ export function useProjectFileQuery(
     optimisticFileAtom(environmentId, cwd, relativePath ?? EMPTY_PROJECT_FILE_PATH),
   );
   const optimisticFile = relativePath === null ? null : optimisticResult;
+  const cause = failureCause(result);
 
   return {
     data: optimisticFile?.data ?? data,
-    error: errorMessage(result),
-    isNotFile: isNotFileFailure(result),
+    error: errorMessage(cause),
+    isNotFile: isProjectReadFileError(cause) && cause.failure === "path_not_file",
     isPending: result.waiting,
     refresh,
   };

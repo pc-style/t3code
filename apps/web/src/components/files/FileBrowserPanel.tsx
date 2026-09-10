@@ -302,10 +302,8 @@ export default function FileBrowserPanel({
     const selectedKind = entryKinds.get(selectedPath);
     if (selectedKind === undefined) return;
     // Directory rows are registered with a trailing slash (see treePath).
-    const selectedItem =
-      selectedKind === "directory"
-        ? model.getItem(`${selectedPath}/`)
-        : model.getItem(selectedPath);
+    const selectedTreePath = selectedKind === "directory" ? `${selectedPath}/` : selectedPath;
+    const selectedItem = model.getItem(selectedTreePath);
     if (!selectedItem) return;
 
     // A selection that originated inside the tree (clicking a row, possibly
@@ -339,9 +337,9 @@ export default function FileBrowserPanel({
       if (item && "expand" in item) item.expand();
     }
 
-    if (selectedKind === "directory" && "expand" in selectedItem) selectedItem.expand();
+    if ("expand" in selectedItem) selectedItem.expand();
     selectedItem.select();
-    model.scrollToPath(selectedKind === "directory" ? `${selectedPath}/` : selectedPath, {
+    model.scrollToPath(selectedTreePath, {
       focus: true,
       offset: "center",
     });
