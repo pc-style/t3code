@@ -5,10 +5,6 @@ import {
   ProjectReadFileError,
   type ProjectReadFileResult,
 } from "@t3tools/contracts";
-import {
-  isWorkspaceImagePreviewPath,
-  isWorkspaceVideoPreviewPath,
-} from "@t3tools/shared/filePreview";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -194,13 +190,11 @@ export function useProjectFileQuery(
   relativePath: string | null,
   enabled = true,
 ): ProjectFileQueryState {
-  const isMedia =
-    relativePath !== null &&
-    (isWorkspaceImagePreviewPath(relativePath) || isWorkspaceVideoPreviewPath(relativePath));
-  const atom =
-    enabled && !isMedia
-      ? getProjectFileQueryAtom(environmentId, cwd, relativePath)
-      : EMPTY_PROJECT_FILE_QUERY_ATOM;
+  // The caller decides what to read. A media path is not skipped here: a folder
+  // named `assets.png` is only knowable as a folder from the read failure.
+  const atom = enabled
+    ? getProjectFileQueryAtom(environmentId, cwd, relativePath)
+    : EMPTY_PROJECT_FILE_QUERY_ATOM;
   const result = useAtomValue(atom);
   const refreshAtom = useAtomRefresh(atom);
   const refresh = useCallback(() => refreshAtom(), [refreshAtom]);
