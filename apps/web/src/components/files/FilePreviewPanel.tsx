@@ -1001,12 +1001,13 @@ export default function FilePreviewPanel({
       : isHtml
         ? ("html" as const)
         : null;
-  const canToggleRendered = attachment === undefined && renderedMode !== null;
+  const canToggleRendered =
+    previewPath !== null && attachment === undefined && renderedMode !== null;
   const updateClientSettings = useUpdateClientSettings();
   // Word wrap only reaches the text bodies. A rendered Markdown document, a table and the
   // browser frame all lay themselves out, so the toggle stays hidden rather than inert.
   const showsRawText =
-    relativePath !== null &&
+    previewPath !== null &&
     file.data !== null &&
     !(isMarkdown && renderMarkdown) &&
     !(tableDelimiter && renderTable) &&
@@ -1178,7 +1179,7 @@ export default function FilePreviewPanel({
         <div
           className={cn("min-w-0 flex-1 flex-col overflow-hidden", previewPath ? "flex" : "hidden")}
         >
-          {relativePath && attachment ? (
+          {isDirectory ? null : relativePath && attachment ? (
             <AttachmentFilePreview
               key={`${environmentId}:${attachment.id}`}
               name={attachment.name}

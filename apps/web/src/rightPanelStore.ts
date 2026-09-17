@@ -17,7 +17,6 @@ import {
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
-import { normalizeProjectPathForDispatch } from "./lib/projectPaths";
 import { resolveStorage } from "./lib/storage";
 
 const RIGHT_PANEL_KINDS = [
@@ -578,8 +577,10 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
       openFile: (ref, requestedPath, line) =>
         set((state) =>
           userAction(state, scopedThreadKey(ref), (current) => {
-            // A folder link may end in a slash; the tree keys folders without it.
-            const relativePath = normalizeProjectPathForDispatch(requestedPath);
+            // Workspace entry paths use '/', including on Windows.
+            const relativePath = /^[A-Za-z]:\/+$/.test(requestedPath)
+              ? requestedPath
+              : requestedPath.replace(/\/+$/, "") || requestedPath;
             const withoutStandaloneExplorer = current.surfaces.filter(
               (surface) => surface.kind !== "files",
             );
