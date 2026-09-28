@@ -18,7 +18,7 @@ describe("rankSwearJar", () => {
           {
             provider: "claude",
             model: "opus",
-            messages: 40,
+            messages: 140,
             cursed: 2,
             frustrated: 3,
             outputTokens: 1_000_000,

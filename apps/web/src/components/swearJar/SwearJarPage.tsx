@@ -1,16 +1,26 @@
 import type { SwearJarInput, SwearJarModel } from "@t3tools/contracts";
-import { formatCount, formatDayShort, formatTokens, makeWindow } from "@t3tools/shared/usageFormat";
+import {
+  formatCount,
+  formatDayShort,
+  formatPercent,
+  formatTokens,
+  makeWindow,
+} from "@t3tools/shared/usageFormat";
 import { Link } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 
 import { isElectron } from "../../env";
 import { useEscapeToGoBack } from "../../hooks/useNavigateBack";
 import { useSwearJarEnabled } from "../../hooks/useSettings";
+import { cn } from "../../lib/utils";
 import { useSwearJar } from "../../state/swearJar";
 import { Badge } from "../ui/badge";
 import { ScrollArea } from "../ui/scroll-area";
 import { SidebarInset } from "../ui/sidebar";
+import { Skeleton } from "../ui/skeleton";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { PROVIDER_PRESENTATION } from "../usage/usageProviders";
 import { WorkspaceBreadcrumb, WorkspaceBreadcrumbItem } from "../WorkspaceBreadcrumb";
 import { WorkspacePageContainer } from "../WorkspacePageContainer";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
@@ -24,8 +34,8 @@ import {
 const WINDOW_OPTIONS = [7, 30, 90] as const;
 type WindowDays = (typeof WINDOW_OPTIONS)[number];
 
-const CURSED_BAR = "bg-[#f4846c]";
-const FRUSTRATED_BAR = "bg-[#6ea8fe]";
+const CURSED_COLOR = "bg-destructive";
+const FRUSTRATED_COLOR = "bg-info";
 
 export function SwearJarPage() {
   useEscapeToGoBack();
@@ -50,22 +60,27 @@ export function SwearJarPage() {
               Just for fun
             </Badge>
             {enabled ? (
-              <ToggleGroup
-                aria-label="Swear jar period"
-                variant="segmented"
-                className="ms-auto"
-                value={[String(windowDays)]}
-                onValueChange={(next) => {
-                  const days = WINDOW_OPTIONS.find((option) => String(option) === next[0]);
-                  if (days !== undefined) setWindowDays(days);
-                }}
-              >
-                {WINDOW_OPTIONS.map((days) => (
-                  <Toggle key={days} value={String(days)}>
-                    {days} days
-                  </Toggle>
-                ))}
-              </ToggleGroup>
+              <>
+                <span className="hidden min-w-0 truncate text-xs text-muted-foreground 2xl:block">
+                  {formatDayShort(input.sinceDay)} to {formatDayShort(input.untilDay)}
+                </span>
+                <ToggleGroup
+                  aria-label="Swear jar period"
+                  variant="segmented"
+                  className="ms-auto"
+                  value={[String(windowDays)]}
+                  onValueChange={(next) => {
+                    const days = WINDOW_OPTIONS.find((option) => String(option) === next[0]);
+                    if (days !== undefined) setWindowDays(days);
+                  }}
+                >
+                  {WINDOW_OPTIONS.map((days) => (
+                    <Toggle key={days} value={String(days)}>
+                      {days} days
+                    </Toggle>
+                  ))}
+                </ToggleGroup>
+              </>
             ) : null}
           </div>
         </WorkspacePageHeader>
@@ -92,70 +107,132 @@ export function SwearJarPage() {
 
 function SwearJarContent({ input }: { readonly input: SwearJarInput }) {
   const environments = useSwearJar(input);
-  const { ranked, unranked } = useMemo(
-    () => rankSwearJar(mergeSwearJars(environments.map((environment) => environment.models ?? []))),
+  const models = useMemo(
+    () => mergeSwearJars(environments.map((environment) => environment.models ?? [])),
     [environments],
   );
+  const { ranked, unranked } = useMemo(() => rankSwearJar(models), [models]);
   const stillCounting = environments.some(
     (environment) => environment.models === null && !environment.failed,
   );
   const failed = environments.filter((environment) => environment.failed);
+
+  if (stillCounting && models.length === 0) return <SwearJarSkeleton />;
+
+  const totals = models.reduce(
+    (sum, model) => ({
+      messages: sum.messages + model.messages,
+      cursed: sum.cursed + model.cursed,
+      frustrated: sum.frustrated + model.frustrated,
+    }),
+    { messages: 0, cursed: 0, frustrated: 0 },
+  );
+  const angry = totals.cursed + totals.frustrated;
   const maxRate = ranked[0]?.rate ?? 0;
 
   return (
-    <div className="flex flex-col gap-4">
-      <p className="max-w-2xl text-sm text-muted-foreground">
+    <>
+      <p className="mb-4 max-w-2xl text-sm text-muted-foreground">
         A deeply unscientific ranking of which models make you lose it. T3 Code greps your own
         messages for cursing and grumbling, then divides by each model's output tokens. It is a dumb
         stat. Please do not pick a model with it.
       </p>
 
-      <section className="rounded-xl bg-neutral-950 p-5 font-mono text-sm text-neutral-100 shadow-sm sm:p-6">
-        <h2 className="text-base font-semibold">Ranking per output token</h2>
-        <p className="mt-1 text-xs text-neutral-400">
-          Models with {MIN_RANKED_MESSAGES}+ messages from {formatDayShort(input.sinceDay)} to{" "}
-          {formatDayShort(input.untilDay)}. Frustrated messages per 10M output tokens.
-        </p>
-        <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-xs text-neutral-300">
-          <LegendSwatch className={CURSED_BAR} label="cursed at or insulted" />
-          <LegendSwatch className={FRUSTRATED_BAR} label="frustrated, no curse" />
-        </div>
-
-        <div className="mt-5 grid grid-cols-[2.5ch_minmax(7rem,12rem)_minmax(4rem,1fr)_6ch] items-center gap-x-3 gap-y-1.5 md:grid-cols-[2.5ch_minmax(7rem,12rem)_minmax(4rem,1fr)_6ch_minmax(0,17rem)]">
-          {ranked.map((row, index) => (
-            <RankedRow
-              key={`${row.provider ?? ""}:${row.model}`}
-              row={row}
-              rank={index + 1}
-              max={maxRate}
-            />
-          ))}
-        </div>
-
-        {ranked.length === 0 ? (
-          <p className="py-4 text-neutral-400">
-            {stillCounting
-              ? "Counting swear words…"
-              : unranked.length === 0
-                ? "The jar is empty. Either the agents are behaving or you are a saint."
-                : `Nothing has ${MIN_RANKED_MESSAGES}+ messages and known output tokens yet. Keep yelling.`}
-          </p>
-        ) : null}
-
-        {unranked.length > 0 ? (
-          <div className="mt-6 border-t border-neutral-800 pt-4">
-            <h3 className="text-xs text-neutral-400">Not enough evidence yet</h3>
-            <ul className="mt-2 flex flex-col gap-1 text-xs text-neutral-400">
-              {unranked.map((model) => (
-                <li key={`${model.provider ?? ""}:${model.model}`} className="flex gap-3">
-                  <span className="min-w-0 truncate text-neutral-200">{model.model}</span>
-                  <span className="shrink-0">{describeCounts(model)}</span>
-                </li>
-              ))}
-            </ul>
+      <section className="grid gap-6 lg:grid-cols-[minmax(0,18rem)_minmax(0,1fr)]">
+        <div className="flex min-w-0 flex-col gap-5">
+          <div className="flex flex-col gap-1">
+            <span className="text-4xl font-semibold text-foreground tabular-nums">
+              {formatCount(angry)}
+            </span>
+            <span className="text-xs text-muted-foreground">
+              frustrated messages ·{" "}
+              {formatPercent(totals.messages === 0 ? 0 : angry / totals.messages)} of{" "}
+              {formatCount(totals.messages)}
+            </span>
           </div>
-        ) : null}
+          <LegendRow
+            color={CURSED_COLOR}
+            label="Cursed at or insulted the model"
+            count={totals.cursed}
+          />
+          <LegendRow
+            color={FRUSTRATED_COLOR}
+            label="Frustrated, no curse"
+            count={totals.frustrated}
+          />
+        </div>
+
+        <div className="flex min-w-0 flex-col gap-3">
+          <div className="flex flex-col gap-0.5">
+            <h2 className="text-sm font-medium text-foreground">Ranking per output token</h2>
+            <p className="text-xs text-muted-foreground">
+              Models with {MIN_RANKED_MESSAGES}+ messages. Sorted by frustrated messages per 10M
+              output tokens.
+            </p>
+          </div>
+          {ranked.length === 0 ? (
+            <p className="py-6 text-center text-sm text-muted-foreground">
+              {unranked.length === 0
+                ? "The jar is empty. Either the agents are behaving or you are a saint."
+                : `Nothing has ${MIN_RANKED_MESSAGES}+ messages yet. Keep yelling.`}
+            </p>
+          ) : (
+            <ol className="flex flex-col">
+              {ranked.map((row, index) => (
+                <RankedRow
+                  key={`${row.provider ?? ""}:${row.model}`}
+                  row={row}
+                  rank={index + 1}
+                  max={maxRate}
+                />
+              ))}
+            </ol>
+          )}
+        </div>
       </section>
+
+      {unranked.length > 0 ? (
+        <section className="flex flex-col gap-2">
+          <h2 className="text-sm font-medium text-foreground">Not enough evidence yet</h2>
+          <table className="w-full table-fixed text-sm">
+            <colgroup>
+              <col className="w-2/5" />
+              <col className="w-1/5" />
+              <col className="w-1/5" />
+              <col className="w-1/5" />
+            </colgroup>
+            <thead>
+              <tr className="border-b border-border text-left text-xs text-muted-foreground">
+                <th className="py-2 font-normal">Model</th>
+                <th className="py-2 text-right font-normal">Cursed</th>
+                <th className="py-2 text-right font-normal">Frustrated</th>
+                <th className="py-2 text-right font-normal">Messages</th>
+              </tr>
+            </thead>
+            <tbody>
+              {unranked.map((model) => (
+                <tr
+                  key={`${model.provider ?? ""}:${model.model}`}
+                  className="border-b border-border/50 transition-colors hover:bg-muted/50"
+                >
+                  <td className="py-2 text-foreground">
+                    <ModelLabel model={model} />
+                  </td>
+                  <td className="py-2 text-right text-muted-foreground tabular-nums">
+                    {formatCount(model.cursed)}
+                  </td>
+                  <td className="py-2 text-right text-muted-foreground tabular-nums">
+                    {formatCount(model.frustrated)}
+                  </td>
+                  <td className="py-2 text-right text-muted-foreground tabular-nums">
+                    {formatCount(model.messages)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      ) : null}
 
       {failed.length > 0 ? (
         <p className="text-xs text-muted-foreground">
@@ -163,21 +240,38 @@ function SwearJarContent({ input }: { readonly input: SwearJarInput }) {
           that server to include it.
         </p>
       ) : null}
+    </>
+  );
+}
+
+function LegendRow({
+  color,
+  label,
+  count,
+}: {
+  readonly color: string;
+  readonly label: string;
+  readonly count: number;
+}) {
+  return (
+    <div className="flex items-baseline justify-between gap-4">
+      <span className="flex min-w-0 items-center gap-2 text-sm text-foreground">
+        <span aria-hidden className={cn("size-2 shrink-0 rounded-full", color)} />
+        <span className="truncate">{label}</span>
+      </span>
+      <span className="shrink-0 text-sm font-medium text-foreground tabular-nums">
+        {formatCount(count)}
+      </span>
     </div>
   );
 }
 
-function LegendSwatch({
-  className,
-  label,
-}: {
-  readonly className: string;
-  readonly label: string;
-}) {
+function ModelLabel({ model }: { readonly model: SwearJarModel }) {
+  const Mark = model.provider ? PROVIDER_PRESENTATION[model.provider].mark : null;
   return (
-    <span className="flex items-center gap-1.5">
-      <span aria-hidden className={`size-2.5 ${className}`} />
-      {label}
+    <span className="flex min-w-0 items-center gap-2">
+      {Mark ? <Mark className="size-3.5 shrink-0" aria-hidden /> : null}
+      <span className="truncate">{model.model}</span>
     </span>
   );
 }
@@ -191,33 +285,59 @@ function RankedRow({
   readonly rank: number;
   readonly max: number;
 }) {
-  const angry = row.cursed + row.frustrated;
+  const width = max === 0 ? 0 : (row.rate / max) * 100;
   return (
-    <>
-      <span className="text-right text-neutral-500 tabular-nums">{rank}</span>
-      <span className="truncate">{row.model}</span>
-      <span
-        className="flex h-4"
-        role="img"
-        aria-label={`${row.cursed} cursed, ${row.frustrated} frustrated`}
-      >
-        <span
-          className="flex h-full"
-          style={{ width: `${max === 0 ? 0 : (row.rate / max) * 100}%` }}
+    <li className="grid grid-cols-[1.5rem_minmax(8rem,14rem)_minmax(0,1fr)_3.5rem] items-center gap-x-3 border-b border-border/50 py-2 text-sm">
+      <span className="text-right text-xs text-muted-foreground tabular-nums">{rank}</span>
+      <ModelLabel model={row} />
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <span
+              className="flex h-2.5 gap-0.5"
+              style={{ width: `${width}%` }}
+              role="img"
+              aria-label={`${row.cursed} cursed, ${row.frustrated} frustrated`}
+            />
+          }
         >
-          <span className={CURSED_BAR} style={{ flexGrow: row.cursed }} />
-          <span className={FRUSTRATED_BAR} style={{ flexGrow: angry === 0 ? 1 : row.frustrated }} />
-        </span>
+          {row.cursed > 0 ? (
+            <span className={cn("rounded-full", CURSED_COLOR)} style={{ flexGrow: row.cursed }} />
+          ) : null}
+          {row.frustrated > 0 ? (
+            <span
+              className={cn("rounded-full", FRUSTRATED_COLOR)}
+              style={{ flexGrow: row.frustrated }}
+            />
+          ) : null}
+        </TooltipTrigger>
+        <TooltipPopup>
+          {formatCount(row.cursed)} cursed · {formatCount(row.frustrated)} frustrated ·{" "}
+          {formatCount(row.messages)} messages · {formatTokens(row.outputTokens)} output tokens
+        </TooltipPopup>
+      </Tooltip>
+      <span className="text-right font-medium text-foreground tabular-nums">
+        {row.rate.toFixed(1)}
       </span>
-      <span className="text-right tabular-nums">{row.rate.toFixed(1)}</span>
-      <span className="hidden truncate text-neutral-400 tabular-nums md:block">
-        {describeCounts(row)}
-      </span>
-    </>
+    </li>
   );
 }
 
-function describeCounts(model: SwearJarModel): string {
-  const tokens = model.outputTokens > 0 ? `, ${formatTokens(model.outputTokens)} tok` : "";
-  return `${model.cursed}+${model.frustrated} of ${formatCount(model.messages)} msgs${tokens}`;
+function SwearJarSkeleton() {
+  return (
+    <section className="grid gap-6 lg:grid-cols-[minmax(0,18rem)_minmax(0,1fr)]">
+      <div className="flex flex-col gap-5">
+        <div className="flex flex-col gap-1">
+          <Skeleton className="h-10 w-24" />
+          <Skeleton className="h-4 w-40" />
+        </div>
+        <Skeleton className="h-4 w-full" />
+        <Skeleton className="h-4 w-full" />
+      </div>
+      <div className="flex flex-col gap-3">
+        <Skeleton className="h-5 w-40" />
+        <Skeleton className="h-56" />
+      </div>
+    </section>
+  );
 }

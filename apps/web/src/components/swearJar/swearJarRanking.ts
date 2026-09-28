@@ -1,7 +1,7 @@
 import type { SwearJarModel } from "@t3tools/contracts";
 
 /** Fewer messages than this and one bad afternoon decides the ranking. */
-export const MIN_RANKED_MESSAGES = 25;
+export const MIN_RANKED_MESSAGES = 100;
 
 const TOKENS_PER_RATE = 10_000_000;
 
