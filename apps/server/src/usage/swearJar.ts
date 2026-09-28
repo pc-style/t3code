@@ -15,6 +15,7 @@ import {
   type SwearJarInput,
   type SwearJarModel,
   type UsageBucket,
+  type UsageDay,
   UsageProviderKind,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -148,11 +149,12 @@ export const readSwearJarCounts = Effect.fn("readSwearJarCounts")(function* (
   `;
 
   const toDay = makeDayFormatter(input.timeZone);
-  const messages = rows.filter((row) => {
+  const messages = rows.flatMap((row) => {
     const at = toEpochMillis(row.createdAt);
-    if (at === null) return false;
+    if (at === null) return [];
     const day = toDay(at);
-    return day >= input.sinceDay && day <= input.untilDay;
+    if (day < input.sinceDay || day > input.untilDay) return [];
+    return [{ ...row, day }];
   });
   if (messages.length === 0) return [];
 
@@ -184,6 +186,7 @@ export const readSwearJarCounts = Effect.fn("readSwearJarCounts")(function* (
       messages: number;
       cursed: number;
       frustrated: number;
+      days: Map<string, { cursed: number; frustrated: number }>;
     }
   >();
   for (const message of messages) {
@@ -196,16 +199,31 @@ export const readSwearJarCounts = Effect.fn("readSwearJarCounts")(function* (
     const { instanceId, model } = selection.value;
     const provider = usageProviderForDriver(providerInstances[instanceId]?.driver ?? instanceId);
     const key = `${provider ?? ""}\u0000${model}`;
-    const entry = counts.get(key) ?? { provider, model, messages: 0, cursed: 0, frustrated: 0 };
+    const entry = counts.get(key) ?? {
+      provider,
+      model,
+      messages: 0,
+      cursed: 0,
+      frustrated: 0,
+      days: new Map(),
+    };
     entry.messages += 1;
     const mood = message.text === null ? null : classifyMessage(message.text);
-    if (mood !== null) entry[mood] += 1;
+    if (mood !== null) {
+      entry[mood] += 1;
+      const day = entry.days.get(message.day) ?? { cursed: 0, frustrated: 0 };
+      day[mood] += 1;
+      entry.days.set(message.day, day);
+    }
     counts.set(key, entry);
   }
 
-  return [...counts.values()].map(({ provider, ...rest }): SwearJarCounts =>
-    provider === undefined ? rest : { provider, ...rest },
-  );
+  return [...counts.values()].map(({ provider, days, ...rest }): SwearJarCounts => {
+    const series = [...days]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([day, tally]) => ({ day: day as UsageDay, ...tally }));
+    return provider === undefined ? { ...rest, days: series } : { provider, ...rest, days: series };
+  });
 });
 
 /**

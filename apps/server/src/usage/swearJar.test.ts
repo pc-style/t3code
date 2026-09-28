@@ -117,8 +117,25 @@ layer("readSwearJarCounts", (it) => {
       assert.deepStrictEqual(
         counts.toSorted((a, b) => a.model.localeCompare(b.model)),
         [
-          { provider: "claude", model: "claude-opus-5", messages: 1, cursed: 1, frustrated: 0 },
-          { provider: "codex", model: "gpt-5.6", messages: 3, cursed: 1, frustrated: 1 },
+          {
+            provider: "claude",
+            model: "claude-opus-5",
+            messages: 1,
+            cursed: 1,
+            frustrated: 0,
+            days: [{ day: "2026-09-12" as UsageDay, cursed: 1, frustrated: 0 }],
+          },
+          {
+            provider: "codex",
+            model: "gpt-5.6",
+            messages: 3,
+            cursed: 1,
+            frustrated: 1,
+            days: [
+              { day: "2026-09-10" as UsageDay, cursed: 1, frustrated: 0 },
+              { day: "2026-09-11" as UsageDay, cursed: 0, frustrated: 1 },
+            ],
+          },
         ],
       );
     }),
@@ -147,7 +164,16 @@ it("joins output tokens by provider, tolerating dated transcript model names", (
     }) as UsageBucket;
 
   const [row] = attachOutputTokens(
-    [{ provider: "claude", model: "claude-opus-5", messages: 4, cursed: 1, frustrated: 1 }],
+    [
+      {
+        provider: "claude",
+        model: "claude-opus-5",
+        messages: 4,
+        cursed: 1,
+        frustrated: 1,
+        days: [],
+      },
+    ],
     [
       bucket("claude", "claude-opus-5", 100),
       bucket("claude", "claude-opus-5-20260901", 50),

@@ -14,7 +14,6 @@ import { useEscapeToGoBack } from "../../hooks/useNavigateBack";
 import { useSwearJarEnabled } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { useSwearJar } from "../../state/swearJar";
-import { Badge } from "../ui/badge";
 import { ScrollArea } from "../ui/scroll-area";
 import { SidebarInset } from "../ui/sidebar";
 import { Skeleton } from "../ui/skeleton";
@@ -24,8 +23,10 @@ import { PROVIDER_PRESENTATION } from "../usage/usageProviders";
 import { WorkspaceBreadcrumb, WorkspaceBreadcrumbItem } from "../WorkspaceBreadcrumb";
 import { WorkspacePageContainer } from "../WorkspacePageContainer";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
+import { SwearJarTimeChart } from "./SwearJarTimeChart";
 import {
   MIN_RANKED_MESSAGES,
+  annoyanceSeries,
   mergeSwearJars,
   rankSwearJar,
   type SwearJarRow,
@@ -56,9 +57,6 @@ export function SwearJarPage() {
                 <h1>Swear Jar</h1>
               </WorkspaceBreadcrumbItem>
             </WorkspaceBreadcrumb>
-            <Badge variant="secondary" size="sm">
-              Just for fun
-            </Badge>
             {enabled ? (
               <>
                 <span className="hidden min-w-0 truncate text-xs text-muted-foreground 2xl:block">
@@ -112,6 +110,21 @@ function SwearJarContent({ input }: { readonly input: SwearJarInput }) {
     [environments],
   );
   const { ranked, unranked } = useMemo(() => rankSwearJar(models), [models]);
+  const series = useMemo(
+    () => annoyanceSeries(models, input.sinceDay, input.untilDay),
+    [input.sinceDay, input.untilDay, models],
+  );
+  const modelPeak = useMemo(
+    () =>
+      ranked.reduce((peak, row) => {
+        const rowPeak = annoyanceSeries([row], input.sinceDay, input.untilDay).reduce(
+          (inner, day) => Math.max(inner, day.cursed + day.frustrated),
+          0,
+        );
+        return Math.max(peak, rowPeak);
+      }, 0),
+    [input.sinceDay, input.untilDay, ranked],
+  );
   const stillCounting = environments.some(
     (environment) => environment.models === null && !environment.failed,
   );
@@ -132,12 +145,6 @@ function SwearJarContent({ input }: { readonly input: SwearJarInput }) {
 
   return (
     <>
-      <p className="mb-4 max-w-2xl text-sm text-muted-foreground">
-        A deeply unscientific ranking of which models make you lose it. T3 Code greps your own
-        messages for cursing and grumbling, then divides by each model's output tokens. It is a dumb
-        stat. Please do not pick a model with it.
-      </p>
-
       <section className="grid gap-6 lg:grid-cols-[minmax(0,18rem)_minmax(0,1fr)]">
         <div className="flex min-w-0 flex-col gap-5">
           <div className="flex flex-col gap-1">
@@ -189,6 +196,26 @@ function SwearJarContent({ input }: { readonly input: SwearJarInput }) {
             </ol>
           )}
         </div>
+      </section>
+
+      <section className="flex flex-col gap-4">
+        <h2 className="text-sm font-medium text-foreground">Annoyance over time</h2>
+        <SwearJarTimeChart series={series} label="Annoyed messages per day" />
+        {ranked.length > 0 ? (
+          <div className="grid gap-x-6 gap-y-4 sm:grid-cols-2 xl:grid-cols-3">
+            {ranked.map((row) => (
+              <div key={`${row.provider ?? ""}:${row.model}`} className="flex flex-col gap-2">
+                <ModelLabel model={row} />
+                <SwearJarTimeChart
+                  series={annoyanceSeries([row], input.sinceDay, input.untilDay)}
+                  scalePeak={modelPeak}
+                  compact
+                  label={`Annoyed messages per day for ${row.model}`}
+                />
+              </div>
+            ))}
+          </div>
+        ) : null}
       </section>
 
       {unranked.length > 0 ? (

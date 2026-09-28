@@ -1,4 +1,5 @@
-import type { SwearJarModel } from "@t3tools/contracts";
+import type { SwearJarDay, SwearJarModel } from "@t3tools/contracts";
+import { enumerateDays } from "@t3tools/shared/usageFormat";
 
 /** Fewer messages than this and one bad afternoon decides the ranking. */
 export const MIN_RANKED_MESSAGES = 100;
@@ -14,6 +15,24 @@ export interface SwearJarRanking {
   readonly ranked: readonly SwearJarRow[];
   /** Too few messages, or no output tokens to divide by. */
   readonly unranked: readonly SwearJarModel[];
+}
+
+function mergeDays(left: readonly SwearJarDay[], right: readonly SwearJarDay[]): SwearJarDay[] {
+  const byDay = new Map<string, SwearJarDay>();
+  for (const day of [...left, ...right]) {
+    const previous = byDay.get(day.day);
+    byDay.set(
+      day.day,
+      previous === undefined
+        ? day
+        : {
+            day: day.day,
+            cursed: previous.cursed + day.cursed,
+            frustrated: previous.frustrated + day.frustrated,
+          },
+    );
+  }
+  return [...byDay.values()].sort((a, b) => a.day.localeCompare(b.day));
 }
 
 /** Environments read disjoint thread histories, so their counts simply add up. */
@@ -33,11 +52,40 @@ export function mergeSwearJars(jars: readonly (readonly SwearJarModel[])[]): Swe
               cursed: previous.cursed + model.cursed,
               frustrated: previous.frustrated + model.frustrated,
               outputTokens: previous.outputTokens + model.outputTokens,
+              days: mergeDays(previous.days, model.days),
             },
       );
     }
   }
   return [...merged.values()];
+}
+
+export interface AnnoyanceDay {
+  readonly day: string;
+  readonly cursed: number;
+  readonly frustrated: number;
+}
+
+/** Every day of the window, quiet days included, so a chart does not skip them. */
+export function annoyanceSeries(
+  models: readonly Pick<SwearJarModel, "days">[],
+  sinceDay: string,
+  untilDay: string,
+): AnnoyanceDay[] {
+  const totals = new Map<string, { cursed: number; frustrated: number }>();
+  for (const model of models) {
+    for (const day of model.days) {
+      const previous = totals.get(day.day) ?? { cursed: 0, frustrated: 0 };
+      totals.set(day.day, {
+        cursed: previous.cursed + day.cursed,
+        frustrated: previous.frustrated + day.frustrated,
+      });
+    }
+  }
+  return enumerateDays(sinceDay, untilDay).map((day) => {
+    const counts = totals.get(day);
+    return { day, cursed: counts?.cursed ?? 0, frustrated: counts?.frustrated ?? 0 };
+  });
 }
 
 export function rankSwearJar(models: readonly SwearJarModel[]): SwearJarRanking {

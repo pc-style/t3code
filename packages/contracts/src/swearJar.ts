@@ -6,6 +6,7 @@
  *
  * @module swearJar
  */
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import { ForwardCompatibleArray, NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
@@ -20,6 +21,14 @@ export const SwearJarInput = Schema.Struct({
 });
 export type SwearJarInput = typeof SwearJarInput.Type;
 
+/** One local day that contained at least one annoyed message. Quiet days are omitted. */
+export const SwearJarDay = Schema.Struct({
+  day: UsageDay,
+  cursed: NonNegativeInt,
+  frustrated: NonNegativeInt,
+});
+export type SwearJarDay = typeof SwearJarDay.Type;
+
 export const SwearJarModel = Schema.Struct({
   /** Absent when the provider instance's driver has no usage presentation. */
   provider: Schema.optionalKey(UsageProviderKind),
@@ -32,6 +41,8 @@ export const SwearJarModel = Schema.Struct({
   frustrated: NonNegativeInt,
   /** Output tokens from this environment's usage transcripts; 0 when unknown. */
   outputTokens: NonNegativeInt,
+  /** Annoyed messages by local day. Missing on older servers, which draw no chart. */
+  days: ForwardCompatibleArray(SwearJarDay).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
 });
 export type SwearJarModel = typeof SwearJarModel.Type;
 
