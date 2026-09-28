@@ -114,17 +114,6 @@ function SwearJarContent({ input }: { readonly input: SwearJarInput }) {
     () => annoyanceSeries(models, input.sinceDay, input.untilDay),
     [input.sinceDay, input.untilDay, models],
   );
-  const modelPeak = useMemo(
-    () =>
-      ranked.reduce((peak, row) => {
-        const rowPeak = annoyanceSeries([row], input.sinceDay, input.untilDay).reduce(
-          (inner, day) => Math.max(inner, day.cursed + day.frustrated),
-          0,
-        );
-        return Math.max(peak, rowPeak);
-      }, 0),
-    [input.sinceDay, input.untilDay, ranked],
-  );
   const stillCounting = environments.some(
     (environment) => environment.models === null && !environment.failed,
   );
@@ -199,17 +188,34 @@ function SwearJarContent({ input }: { readonly input: SwearJarInput }) {
       </section>
 
       <section className="flex flex-col gap-4">
-        <h2 className="text-sm font-medium text-foreground">Annoyance over time</h2>
-        <SwearJarTimeChart series={series} label="Annoyed messages per day" />
+        <div className="flex flex-col gap-0.5">
+          <h2 className="text-sm font-medium text-foreground">Annoyance over time</h2>
+          <p className="text-xs text-muted-foreground">
+            Annoyed messages per day. Red is cursed at or insulted. Blue, stacked above it, is
+            frustrated with no curse. The numbers on the left count those messages.
+          </p>
+        </div>
+        <div className="flex flex-col gap-2">
+          <h3 className="text-sm font-medium text-foreground">All models</h3>
+          <SwearJarTimeChart series={series} label="Annoyed messages per day, all models" />
+        </div>
         {ranked.length > 0 ? (
-          <div className="grid gap-x-6 gap-y-4 sm:grid-cols-2 xl:grid-cols-3">
+          <div className="grid gap-4 sm:grid-cols-2">
             {ranked.map((row) => (
-              <div key={`${row.provider ?? ""}:${row.model}`} className="flex flex-col gap-2">
-                <ModelLabel model={row} />
+              <div
+                key={`${row.provider ?? ""}:${row.model}`}
+                className="flex flex-col gap-2 rounded-lg border border-border p-3"
+              >
+                <div className="flex items-baseline justify-between gap-3">
+                  <h3 className="min-w-0 text-sm font-medium text-foreground">
+                    <ModelLabel model={row} />
+                  </h3>
+                  <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+                    {formatCount(row.cursed + row.frustrated)} annoyed
+                  </span>
+                </div>
                 <SwearJarTimeChart
                   series={annoyanceSeries([row], input.sinceDay, input.untilDay)}
-                  scalePeak={modelPeak}
-                  compact
                   label={`Annoyed messages per day for ${row.model}`}
                 />
               </div>
