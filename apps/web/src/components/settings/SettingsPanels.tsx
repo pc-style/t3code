@@ -2049,26 +2049,33 @@ function AutoSettleDaysInput({
   );
 }
 
-// The legacy rows sit behind the fold, so a settings-search jump has to
-// expand the section before its target can mount and scroll.
+// These rows sit behind the fold, so a settings-search jump has to expand the
+// section before its target can mount and scroll.
 const LEGACY_FEATURE_TARGET_IDS: ReadonlySet<string> = new Set([
   "legacy-plan-mode",
   "legacy-context-window-indicator",
   "legacy-sidebar",
-  "swear-jar",
 ]);
+const EXPERIMENTAL_FEATURE_TARGET_IDS: ReadonlySet<string> = new Set(["swear-jar"]);
 
 /**
- * Retired features kept only for users who still depend on them. Collapsed by
- * default so they stay out of the everyday settings path; a settings-search
- * jump to one of the rows unfolds the section.
+ * A section folded by default so it stays out of the everyday settings path;
+ * a settings-search jump to one of `targetIds` unfolds it.
  */
-function LegacyFeaturesSection() {
-  const settings = useScopedSettings();
-  const updateSettings = useUpdateScopedSettings();
+function FoldedSettingsSection({
+  id,
+  title,
+  targetIds,
+  children,
+}: {
+  id: string;
+  title: string;
+  targetIds: ReadonlySet<string>;
+  children: ReactNode;
+}) {
   const [open, setOpen] = useState(false);
   const searchTargetId = useSettingsSearchTargetId();
-  const targetRef = useSettingsSearchTarget<HTMLElement>("legacy-features");
+  const targetRef = useSettingsSearchTarget<HTMLElement>(id);
   // Unfold once per search jump; tracking the handled id lets the user fold
   // the section back up without the still-set target immediately reopening it.
   const lastExpandedTargetRef = useRef<string | null>(null);
@@ -2079,79 +2086,104 @@ function LegacyFeaturesSection() {
       lastExpandedTargetRef.current = null;
       return;
     }
-    if (!LEGACY_FEATURE_TARGET_IDS.has(searchTargetId)) return;
+    if (!targetIds.has(searchTargetId)) return;
     if (lastExpandedTargetRef.current === searchTargetId) return;
     lastExpandedTargetRef.current = searchTargetId;
     setOpen(true);
-  }, [searchTargetId]);
+  }, [searchTargetId, targetIds]);
 
   return (
-    <section id="legacy-features" ref={targetRef} tabIndex={-1} className="space-y-2.5">
+    <section id={id} ref={targetRef} tabIndex={-1} className="space-y-2.5">
       <Collapsible open={open} onOpenChange={setOpen}>
         <CollapsibleTrigger className="group flex min-h-8 w-full items-center gap-2 px-3 sm:px-4">
           <h2 className="text-sm font-normal text-foreground/70 transition-colors group-hover:text-foreground">
-            Legacy features
+            {title}
           </h2>
           <ChevronRightIcon className="size-4 text-muted-foreground transition-transform duration-200 group-data-panel-open:rotate-90" />
         </CollapsibleTrigger>
         <CollapsiblePanel>
-          <SettingsGroup>
-            <SettingsRow
-              {...searchableSetting("legacy-plan-mode")}
-              description="Restore Build/Plan, /plan, /default, and Shift+Tab. Off uses build mode."
-              control={
-                <Switch
-                  checked={settings.planModeEnabled}
-                  onCheckedChange={(checked) => {
-                    updateSettings({ planModeEnabled: Boolean(checked) });
-                  }}
-                  aria-label="Plan mode (legacy)"
-                />
-              }
-            />
-            <SettingsRow
-              {...searchableSetting("legacy-context-window-indicator")}
-              description="Shows context window usage as a circular indicator in the composer."
-              control={
-                <Switch
-                  checked={settings.contextWindowMeterEnabled}
-                  onCheckedChange={(checked) =>
-                    updateSettings({ contextWindowMeterEnabled: Boolean(checked) })
-                  }
-                  aria-label="Context window indicator (legacy)"
-                />
-              }
-            />
-            <SettingsRow
-              {...searchableSetting("legacy-sidebar")}
-              description="Restore per-project thread trees instead of the default flat sidebar."
-              control={
-                <Switch
-                  checked={settings.legacySidebarEnabled}
-                  onCheckedChange={(checked) =>
-                    updateSettings({ legacySidebarEnabled: Boolean(checked) })
-                  }
-                  aria-label="Sidebar (legacy)"
-                />
-              }
-            />
-            <SettingsRow
-              {...searchableSetting("swear-jar")}
-              description="A joke page that ranks models by how often you curse at them. Counted by regex, not science."
-              control={
-                <Switch
-                  checked={settings.swearJarEnabled}
-                  onCheckedChange={(checked) =>
-                    updateSettings({ swearJarEnabled: Boolean(checked) })
-                  }
-                  aria-label="Swear jar"
-                />
-              }
-            />
-          </SettingsGroup>
+          <SettingsGroup>{children}</SettingsGroup>
         </CollapsiblePanel>
       </Collapsible>
     </section>
+  );
+}
+
+/** Retired features kept only for users who still depend on them. */
+function LegacyFeaturesSection() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  return (
+    <FoldedSettingsSection
+      id="legacy-features"
+      title="Legacy features"
+      targetIds={LEGACY_FEATURE_TARGET_IDS}
+    >
+      <SettingsRow
+        {...searchableSetting("legacy-plan-mode")}
+        description="Restore Build/Plan, /plan, /default, and Shift+Tab. Off uses build mode."
+        control={
+          <Switch
+            checked={settings.planModeEnabled}
+            onCheckedChange={(checked) => {
+              updateSettings({ planModeEnabled: Boolean(checked) });
+            }}
+            aria-label="Plan mode (legacy)"
+          />
+        }
+      />
+      <SettingsRow
+        {...searchableSetting("legacy-context-window-indicator")}
+        description="Shows context window usage as a circular indicator in the composer."
+        control={
+          <Switch
+            checked={settings.contextWindowMeterEnabled}
+            onCheckedChange={(checked) =>
+              updateSettings({ contextWindowMeterEnabled: Boolean(checked) })
+            }
+            aria-label="Context window indicator (legacy)"
+          />
+        }
+      />
+      <SettingsRow
+        {...searchableSetting("legacy-sidebar")}
+        description="Restore per-project thread trees instead of the default flat sidebar."
+        control={
+          <Switch
+            checked={settings.legacySidebarEnabled}
+            onCheckedChange={(checked) =>
+              updateSettings({ legacySidebarEnabled: Boolean(checked) })
+            }
+            aria-label="Sidebar (legacy)"
+          />
+        }
+      />
+    </FoldedSettingsSection>
+  );
+}
+
+/** Unpolished or joke features that stay hidden until someone opts in. */
+function ExperimentalFeaturesSection() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  return (
+    <FoldedSettingsSection
+      id="experimental-features"
+      title="Experimental"
+      targetIds={EXPERIMENTAL_FEATURE_TARGET_IDS}
+    >
+      <SettingsRow
+        {...searchableSetting("swear-jar")}
+        description="A joke page that ranks models by how often you curse at them. Counted by regex, not science."
+        control={
+          <Switch
+            checked={settings.swearJarEnabled}
+            onCheckedChange={(checked) => updateSettings({ swearJarEnabled: Boolean(checked) })}
+            aria-label="Swear jar"
+          />
+        }
+      />
+    </FoldedSettingsSection>
   );
 }
 
@@ -3289,6 +3321,7 @@ export function GeneralSettingsPanel() {
       </SettingsSection>
 
       <LegacyFeaturesSection />
+      <ExperimentalFeaturesSection />
     </SettingsPageContainer>
   );
 }

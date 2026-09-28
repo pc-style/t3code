@@ -78,7 +78,7 @@ export function SwearJarPage() {
               <p className="text-sm text-muted-foreground">
                 The swear jar is off. Turn it on in{" "}
                 <Link to="/settings/general" className="text-foreground underline">
-                  Settings → General → Legacy features
+                  Settings → General → Experimental
                 </Link>
                 .
               </p>
