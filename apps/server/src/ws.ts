@@ -68,6 +68,7 @@ import {
   AssetWorkspaceContextResolutionError,
   RpcClientId,
   EnvironmentAuthorizationError,
+  SwearJarReadError,
   ThreadId,
   type TerminalAttachStreamEvent,
   type TerminalError,
@@ -156,7 +157,7 @@ import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as HostResources from "./resourceTelemetry/HostResources.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
-import { readSwearTally } from "./usage/swearTally.ts";
+import { attachOutputTokens, readSwearJarCounts } from "./usage/swearJar.ts";
 import * as UsageService from "./usage/UsageService.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
@@ -2671,30 +2672,44 @@ const makeWsRpcLayer = (
             },
           ),
         [WS_METHODS.serverGetUsageSummary]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.serverGetUsageSummary,
-            Effect.all(
-              [
-                usage.readSummary(input),
-                serverSettings.getSettings.pipe(
-                  Effect.flatMap((settings) => readSwearTally(input, settings.providerInstances)),
-                  Effect.provideService(SqlClient.SqlClient, sql),
-                  // A failed tally must not fail the usage summary.
-                  Effect.option,
-                ),
-              ],
-              { concurrency: 2 },
-            ).pipe(
-              Effect.map(([summary, swears]) =>
-                Option.isSome(swears) ? { ...summary, swears: swears.value } : summary,
-              ),
-            ),
-            { "rpc.aggregate": "server" },
-          ),
+          observeRpcEffect(WS_METHODS.serverGetUsageSummary, usage.readSummary(input), {
+            "rpc.aggregate": "server",
+          }),
         [WS_METHODS.serverRefreshUsageRates]: (_input) =>
           observeRpcEffect(WS_METHODS.serverRefreshUsageRates, usage.refreshRates, {
             "rpc.aggregate": "server",
           }),
+        [WS_METHODS.serverGetSwearJar]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.serverGetSwearJar,
+            Effect.all(
+              [
+                serverSettings.getSettings.pipe(
+                  Effect.map((settings) => settings.providerInstances),
+                  Effect.orElseSucceed(() => ({})),
+                  Effect.flatMap((providerInstances) =>
+                    readSwearJarCounts(input, providerInstances),
+                  ),
+                  Effect.provideService(SqlClient.SqlClient, sql),
+                  Effect.mapError(
+                    (cause) =>
+                      new SwearJarReadError({ detail: "Thread history could not be read.", cause }),
+                  ),
+                ),
+                // Without transcripts the jar still counts; it just cannot rank by tokens.
+                usage.readSummary(input).pipe(Effect.option),
+              ],
+              { concurrency: 2 },
+            ).pipe(
+              Effect.map(([counts, summary]) => ({
+                models: attachOutputTokens(
+                  counts,
+                  Option.match(summary, { onNone: () => [], onSome: (value) => value.buckets }),
+                ),
+              })),
+            ),
+            { "rpc.aggregate": "server" },
+          ),
         [WS_METHODS.serverRetryResourceTelemetry]: (_input) =>
           observeRpcEffect(WS_METHODS.serverRetryResourceTelemetry, resourceTelemetry.retry, {
             "rpc.aggregate": "server",

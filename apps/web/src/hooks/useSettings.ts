@@ -379,6 +379,13 @@ export function useLegacySidebarEnabled(): boolean {
   return settingsHydrated && legacySidebarEnabled;
 }
 
+/** The swear jar stays hidden until client settings hydrate and the user opted in. */
+export function useSwearJarEnabled(): boolean {
+  const settingsHydrated = useClientSettingsHydrated();
+  const swearJarEnabled = useClientSettingsValue().swearJarEnabled;
+  return settingsHydrated && swearJarEnabled;
+}
+
 /** Read current settings for one environment, merged with client-local preferences. */
 export function useEnvironmentSettings<T = UnifiedSettings>(
   environmentId: EnvironmentId,

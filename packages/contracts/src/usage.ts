@@ -197,21 +197,6 @@ export const UsageSummaryInput = Schema.Struct({
 });
 export type UsageSummaryInput = typeof UsageSummaryInput.Type;
 
-/**
- * User messages sent from T3 Code in the window that contained profanity,
- * grouped by the model the turn was sent to.
- *
- * Unlike buckets, this reads the environment's own thread history rather than
- * provider transcripts, so environments never overlap and simply sum.
- */
-export const UsageSwearTally = Schema.Struct({
-  /** Absent when the provider instance's driver has no usage presentation. */
-  provider: Schema.optionalKey(UsageProviderKind),
-  model: TrimmedNonEmptyString,
-  messages: NonNegativeInt,
-});
-export type UsageSwearTally = typeof UsageSwearTally.Type;
-
 export const UsageSummary = Schema.Struct({
   contractVersion: Schema.Number,
   readAt: Schema.String,
@@ -220,8 +205,6 @@ export const UsageSummary = Schema.Struct({
   untilDay: UsageDay,
   buckets: ForwardCompatibleArray(UsageBucket),
   sources: ForwardCompatibleArray(UsageSource),
-  /** Absent from servers that predate the tally. */
-  swears: Schema.optionalKey(ForwardCompatibleArray(UsageSwearTally)),
   pricing: UsagePricing,
   /** Wall-clock cost of the scan, surfaced in diagnostics. */
   scanDurationMs: NonNegativeInt,

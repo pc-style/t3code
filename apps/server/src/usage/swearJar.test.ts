@@ -1,11 +1,11 @@
-import { ProviderDriverKind, type UsageDay } from "@t3tools/contracts";
+import { ProviderDriverKind, type UsageBucket, type UsageDay } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
-import { containsSwearing, readSwearTally } from "./swearTally.ts";
+import { attachOutputTokens, classifyMessage, readSwearJarCounts } from "./swearJar.ts";
 
 const layer = it.layer(SqlitePersistenceMemory);
 const encodePayload = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -45,16 +45,19 @@ const insertUserMessage = (message: {
     `;
   });
 
-it("recognises swearing without flagging innocent words", () => {
-  assert.isTrue(containsSwearing("what the FUCK are you doing"));
-  assert.isTrue(containsSwearing("this is bullshit"));
-  assert.isTrue(containsSwearing("wtf, revert that"));
-  assert.isFalse(containsSwearing("scrap the draft and pass the assertion"));
-  assert.isFalse(containsSwearing("offset the classes"));
+it("sorts messages into cursed, frustrated, or neither", () => {
+  assert.strictEqual(classifyMessage("what the FUCK are you doing"), "cursed");
+  assert.strictEqual(classifyMessage("this is bullshit"), "cursed");
+  assert.strictEqual(classifyMessage("are you stupid?"), "cursed");
+  assert.strictEqual(classifyMessage("why did you delete the tests"), "frustrated");
+  assert.strictEqual(classifyMessage("that's not what I asked for"), "frustrated");
+  assert.strictEqual(classifyMessage("again???"), "frustrated");
+  assert.isNull(classifyMessage("scrap the draft and fix the offset assertion"));
+  assert.isNull(classifyMessage("can you stop the dev server when you're done?"));
 });
 
-layer("readSwearTally", (it) => {
-  it.effect("attributes swearing to the model each turn was sent to, within the window", () =>
+layer("readSwearJarCounts", (it) => {
+  it.effect("attributes every message in the window to the model its turn was sent to", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       yield* sql`
@@ -65,43 +68,44 @@ layer("readSwearTally", (it) => {
           '2026-09-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z'
         )
       `;
+      const codex = { instanceId: "work-codex", model: "gpt-5.6" };
       yield* insertUserMessage({
         id: "m1",
         threadId: "thread-a",
         text: "what the fuck are you doing",
         createdAt: "2026-09-10T12:00:00.000Z",
-        modelSelection: { instanceId: "work-codex", model: "gpt-5.6" },
+        modelSelection: codex,
       });
       yield* insertUserMessage({
         id: "m2",
         threadId: "thread-a",
-        text: "wtf",
+        text: "why did you revert that",
         createdAt: "2026-09-11T12:00:00.000Z",
-        modelSelection: { instanceId: "work-codex", model: "gpt-5.6" },
+        modelSelection: codex,
       });
-      // Sent without a selection, so it ran on the thread's model.
       yield* insertUserMessage({
         id: "m3",
         threadId: "thread-a",
-        text: "damn it, again?",
-        createdAt: "2026-09-12T12:00:00.000Z",
+        text: "add a test please",
+        createdAt: "2026-09-11T13:00:00.000Z",
+        modelSelection: codex,
       });
+      // Sent without a selection, so it ran on the thread's model.
       yield* insertUserMessage({
         id: "m4",
         threadId: "thread-a",
-        text: "scrap that approach, please",
-        createdAt: "2026-09-12T13:00:00.000Z",
-        modelSelection: { instanceId: "work-codex", model: "gpt-5.6" },
+        text: "damn it, again?",
+        createdAt: "2026-09-12T12:00:00.000Z",
       });
       yield* insertUserMessage({
         id: "m5",
         threadId: "thread-a",
         text: "shit, outside the window",
         createdAt: "2026-08-01T12:00:00.000Z",
-        modelSelection: { instanceId: "work-codex", model: "gpt-5.6" },
+        modelSelection: codex,
       });
 
-      const tally = yield* readSwearTally(
+      const counts = yield* readSwearJarCounts(
         {
           sinceDay: "2026-09-01" as UsageDay,
           untilDay: "2026-09-30" as UsageDay,
@@ -110,10 +114,46 @@ layer("readSwearTally", (it) => {
         { "work-codex": { driver: ProviderDriverKind.make("codex") } },
       );
 
-      assert.deepStrictEqual(tally, [
-        { provider: "codex", model: "gpt-5.6", messages: 2 },
-        { provider: "claude", model: "claude-opus-5", messages: 1 },
-      ]);
+      assert.deepStrictEqual(
+        counts.toSorted((a, b) => a.model.localeCompare(b.model)),
+        [
+          { provider: "claude", model: "claude-opus-5", messages: 1, cursed: 1, frustrated: 0 },
+          { provider: "codex", model: "gpt-5.6", messages: 3, cursed: 1, frustrated: 1 },
+        ],
+      );
     }),
   );
+});
+
+it("joins output tokens by provider, tolerating dated transcript model names", () => {
+  const bucket = (provider: UsageBucket["provider"], model: string, outputTokens: number) =>
+    ({
+      day: "2026-09-10",
+      provider,
+      model,
+      totals: {
+        uncachedInputTokens: 0,
+        cachedInputTokens: 0,
+        cacheCreationTokens: 0,
+        outputTokens,
+        reasoningTokens: 0,
+      },
+      costUsd: 0,
+      cacheSavingsUsd: 0,
+      costSource: "unpriced",
+      records: 1,
+      unpricedRecords: 1,
+      sessions: 1,
+    }) as UsageBucket;
+
+  const [row] = attachOutputTokens(
+    [{ provider: "claude", model: "claude-opus-5", messages: 4, cursed: 1, frustrated: 1 }],
+    [
+      bucket("claude", "claude-opus-5", 100),
+      bucket("claude", "claude-opus-5-20260901", 50),
+      bucket("claude", "claude-opus-5.5", 999),
+      bucket("codex", "claude-opus-5", 999),
+    ],
+  );
+  assert.strictEqual(row?.outputTokens, 150);
 });

@@ -492,6 +492,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["project thread tree old flat list"],
   },
   {
+    id: "swear-jar",
+    title: "Swear jar",
+    to: "/settings/general",
+    searchTerms: ["swearing curse frustration angry insult joke fun"],
+  },
+  {
     id: "keybindings",
     title: "Keybindings",
     to: "/settings/keybindings",

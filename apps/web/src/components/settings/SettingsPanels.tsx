@@ -2055,6 +2055,7 @@ const LEGACY_FEATURE_TARGET_IDS: ReadonlySet<string> = new Set([
   "legacy-plan-mode",
   "legacy-context-window-indicator",
   "legacy-sidebar",
+  "swear-jar",
 ]);
 
 /**
@@ -2131,6 +2132,19 @@ function LegacyFeaturesSection() {
                     updateSettings({ legacySidebarEnabled: Boolean(checked) })
                   }
                   aria-label="Sidebar (legacy)"
+                />
+              }
+            />
+            <SettingsRow
+              {...searchableSetting("swear-jar")}
+              description="A joke page that ranks models by how often you curse at them. Counted by regex, not science."
+              control={
+                <Switch
+                  checked={settings.swearJarEnabled}
+                  onCheckedChange={(checked) =>
+                    updateSettings({ swearJarEnabled: Boolean(checked) })
+                  }
+                  aria-label="Swear jar"
                 />
               }
             />

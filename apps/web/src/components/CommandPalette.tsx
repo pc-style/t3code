@@ -44,6 +44,7 @@ import {
   ArrowLeftIcon,
   ChartNoAxesColumnIcon,
   CornerLeftUpIcon,
+  AngryIcon,
   FileSearchIcon,
   FolderIcon,
   FolderPlusIcon,
@@ -2038,6 +2039,19 @@ function OpenCommandPaletteDialog(props: {
       await navigate({ to: "/usage" });
     },
   });
+
+  if (clientSettings.swearJarEnabled) {
+    actionItems.push({
+      kind: "action",
+      value: "action:swear-jar",
+      searchTerms: ["swear jar", "swearing", "curse", "frustration", "angry", "insult"],
+      title: "Open swear jar",
+      icon: <AngryIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        await navigate({ to: "/swear-jar" });
+      },
+    });
+  }
 
   actionItems.push({
     kind: "action",

@@ -1060,6 +1060,11 @@ export function createServerEnvironmentAtoms<R, E>(
       staleTimeMs: 60_000,
       refreshTrigger: ({ environmentId }) => usageScanSettingsAtom(environmentId),
     }),
+    swearJar: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:swear-jar",
+      tag: WS_METHODS.serverGetSwearJar,
+      staleTimeMs: 60_000,
+    }),
     configProjection,
     welcome,
     consumeResetCredit: createEnvironmentRpcCommand(runtime, {
