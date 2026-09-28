@@ -156,6 +156,7 @@ import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as HostResources from "./resourceTelemetry/HostResources.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
+import { readSwearTally } from "./usage/swearTally.ts";
 import * as UsageService from "./usage/UsageService.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
@@ -2670,9 +2671,26 @@ const makeWsRpcLayer = (
             },
           ),
         [WS_METHODS.serverGetUsageSummary]: (input) =>
-          observeRpcEffect(WS_METHODS.serverGetUsageSummary, usage.readSummary(input), {
-            "rpc.aggregate": "server",
-          }),
+          observeRpcEffect(
+            WS_METHODS.serverGetUsageSummary,
+            Effect.all(
+              [
+                usage.readSummary(input),
+                serverSettings.getSettings.pipe(
+                  Effect.flatMap((settings) => readSwearTally(input, settings.providerInstances)),
+                  Effect.provideService(SqlClient.SqlClient, sql),
+                  // A failed tally must not fail the usage summary.
+                  Effect.option,
+                ),
+              ],
+              { concurrency: 2 },
+            ).pipe(
+              Effect.map(([summary, swears]) =>
+                Option.isSome(swears) ? { ...summary, swears: swears.value } : summary,
+              ),
+            ),
+            { "rpc.aggregate": "server" },
+          ),
         [WS_METHODS.serverRefreshUsageRates]: (_input) =>
           observeRpcEffect(WS_METHODS.serverRefreshUsageRates, usage.refreshRates, {
             "rpc.aggregate": "server",

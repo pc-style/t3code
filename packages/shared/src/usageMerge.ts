@@ -14,6 +14,7 @@ import {
   type UsageSource,
   type UsageSourceFingerprint,
   type UsageSummary,
+  type UsageSwearTally,
 } from "@t3tools/contracts";
 
 export interface EnvironmentUsage {
@@ -97,6 +98,8 @@ export interface MergedUsage {
   readonly daily: readonly DailyTotals[];
   readonly hourly: readonly HourlyTotals[];
   readonly costQuality: CostQuality;
+  /** Swearing user messages per model, most sworn-at first. */
+  readonly swears: readonly UsageSwearTally[];
   /** Environments whose data was dropped as a duplicate of another's. */
   readonly duplicateSources: readonly string[];
   readonly contributingEnvironments: readonly EnvironmentId[];
@@ -307,6 +310,7 @@ const EMPTY_MERGED: MergedUsage = {
     unpricedShare: 0,
     cacheSavingsUsd: 0,
   },
+  swears: [],
   duplicateSources: [],
   contributingEnvironments: [],
   contractMismatches: [],
@@ -398,8 +402,20 @@ export function mergeUsage(
     }
   >();
   const contributingEnvironments: EnvironmentId[] = [];
+  const swearAccumulator = new Map<string, UsageSwearTally>();
 
   for (const environment of current) {
+    for (const tally of environment.summary.swears ?? []) {
+      const key = `${tally.provider ?? ""} ${tally.model}`;
+      const previous = swearAccumulator.get(key);
+      swearAccumulator.set(
+        key,
+        previous === undefined
+          ? tally
+          : { ...previous, messages: previous.messages + tally.messages },
+      );
+    }
+
     const { buckets, sessionsByProvider } = ownedContribution(
       environment,
       ownerByFingerprint,
@@ -555,6 +571,7 @@ export function mergeUsage(
         records === 0 ? 0 : (records - providerReportedRecords - unpricedRecords) / records,
       cacheSavingsUsd,
     },
+    swears: [...swearAccumulator.values()].sort((a, b) => b.messages - a.messages),
     duplicateSources: duplicates,
     contributingEnvironments,
     contractMismatches,

@@ -359,6 +359,7 @@ export function UsageRouteScreen() {
                   />
                   <TotalsSection merged={merged} isPast24Hours={isPast24Hours} />
                   <ModelsSection merged={merged} />
+                  <SwearsSection merged={merged} />
                 </>
               )}
             </>
@@ -732,6 +733,39 @@ function ModelsSection(props: { readonly merged: MergedUsage }) {
           </View>
           <Text className="text-base tabular-nums text-foreground">
             {isModelCostUnknown(model) ? "Unpriced" : formatUsd(model.costUsd)}
+          </Text>
+        </View>
+      ))}
+    </SettingsSection>
+  );
+}
+
+function SwearsSection(props: { readonly merged: MergedUsage }) {
+  const { swears } = props.merged;
+  if (swears.length === 0) return null;
+  const total = swears.reduce((sum, tally) => sum + tally.messages, 0);
+
+  return (
+    <SettingsSection title="Swears by model">
+      {swears.map((tally, index) => (
+        <View
+          key={`${tally.provider ?? ""}:${tally.model}`}
+          className={
+            index === 0
+              ? "flex-row items-center gap-3 p-4"
+              : "flex-row items-center gap-3 border-t border-border-subtle p-4"
+          }
+        >
+          <View className="min-w-0 flex-1 gap-0.5">
+            <Text className="text-base text-foreground" numberOfLines={1}>
+              {tally.model}
+            </Text>
+            <Text className="text-sm text-foreground-muted">
+              {`${formatPercent(tally.messages / total)} of swearing`}
+            </Text>
+          </View>
+          <Text className="text-base tabular-nums text-foreground">
+            {formatCount(tally.messages)}
           </Text>
         </View>
       ))}

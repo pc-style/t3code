@@ -134,6 +134,32 @@ describe("mergeUsage", () => {
     expect(merged.duplicateSources).toHaveLength(0);
   });
 
+  it("sums swearing per model across environments, most sworn-at first", () => {
+    const merged = mergeUsage(
+      [
+        environment("env-a", {
+          ...summary([], []),
+          swears: [
+            { provider: "codex", model: "gpt-5.6", messages: 2 },
+            { provider: "claude", model: "claude-opus-5", messages: 3 },
+          ],
+        }),
+        environment("env-b", {
+          ...summary([], []),
+          swears: [{ provider: "codex", model: "gpt-5.6", messages: 4 }],
+        }),
+        // Servers that predate the tally omit it.
+        environment("env-c", summary([], [])),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.swears).toEqual([
+      { provider: "codex", model: "gpt-5.6", messages: 6 },
+      { provider: "claude", model: "claude-opus-5", messages: 3 },
+    ]);
+  });
+
   it("counts a shared transcript directory once", () => {
     // Two worktree servers on one machine resolve the same provider home.
     const shared = { provider: "claude" as const, hostId: "mac", homePath: "/home/theo/.claude" };

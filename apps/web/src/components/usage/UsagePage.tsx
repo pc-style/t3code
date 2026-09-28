@@ -124,7 +124,7 @@ export function UsagePage() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [limitsNow, setLimitsNow] = useState(() => Date.now());
   const refreshingRef = useRef(false);
-  const [breakdown, setBreakdown] = useState<"model" | "time">("model");
+  const [breakdown, setBreakdown] = useState<"model" | "time" | "swears">("model");
   const [selectedEnvironmentIds, setSelectedEnvironmentIds] =
     useState<ReadonlySet<EnvironmentId> | null>(null);
   const { days: windowDays, window } = windowSelection;
@@ -621,13 +621,16 @@ export function UsagePage() {
                       value={[breakdown]}
                       onValueChange={(next) => {
                         const value = next[0];
-                        if (value === "model" || value === "time") setBreakdown(value);
+                        if (value === "model" || value === "time" || value === "swears") {
+                          setBreakdown(value);
+                        }
                       }}
                     >
                       {(
                         [
                           { value: "model", label: "Model" },
                           { value: "time", label: isPast24Hours ? "Hour" : "Day" },
+                          { value: "swears", label: "Swears" },
                         ] as const
                       ).map((option) => (
                         <Toggle key={option.value} value={option.value}>
@@ -690,6 +693,8 @@ export function UsagePage() {
                         )}
                       </tbody>
                     </table>
+                  ) : breakdown === "swears" ? (
+                    <UsageSwearTable swears={merged.swears} />
                   ) : (
                     <table className="w-full table-fixed text-sm">
                       <colgroup>
@@ -904,6 +909,57 @@ function ProviderMark({
 }) {
   const Mark = PROVIDER_PRESENTATION[provider].mark;
   return <Mark className={cn("shrink-0", className)} aria-hidden />;
+}
+
+function UsageSwearTable({ swears }: { readonly swears: MergedUsage["swears"] }) {
+  const total = swears.reduce((sum, tally) => sum + tally.messages, 0);
+  return (
+    <table className="w-full table-fixed text-sm">
+      <colgroup>
+        <col className="w-3/5" />
+        <col className="w-1/5" />
+        <col className="w-1/5" />
+      </colgroup>
+      <thead>
+        <tr className="border-b border-border text-left text-xs text-muted-foreground">
+          <th className="py-2 font-normal">Model</th>
+          <th className="py-2 text-right font-normal">Messages</th>
+          <th className="py-2 text-right font-normal">Share</th>
+        </tr>
+      </thead>
+      <tbody>
+        {swears.length === 0 ? (
+          <tr>
+            <td colSpan={3} className="py-6 text-center text-muted-foreground">
+              No swearing at agents in this window.
+            </td>
+          </tr>
+        ) : (
+          swears.map((tally) => (
+            <tr
+              key={`${tally.provider ?? ""}:${tally.model}`}
+              className="border-b border-border/50 transition-colors hover:bg-muted/50"
+            >
+              <td className="py-2 text-foreground">
+                <span className="flex items-center gap-2">
+                  {tally.provider ? (
+                    <ProviderMark provider={tally.provider} className="size-3.5" />
+                  ) : null}
+                  {tally.model}
+                </span>
+              </td>
+              <td className="py-2 text-right text-foreground tabular-nums">
+                {formatCount(tally.messages)}
+              </td>
+              <td className="py-2 text-right text-muted-foreground tabular-nums">
+                {formatPercent(tally.messages / total)}
+              </td>
+            </tr>
+          ))
+        )}
+      </tbody>
+    </table>
+  );
 }
 
 function Metric({ label, value }: { readonly label: string; readonly value: string }) {

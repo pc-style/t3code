@@ -41,6 +41,11 @@ results appear as each one responds.
 If recent work is missing or a new model shows no cost, refresh to rescan session history and
 update model pricing.
 
+Choose **Swears** under **Breakdown** to see how many of your messages swore at each model in the
+selected period. Only messages sent from T3 Code count, matched against a short list of common
+English profanity, and each one counts toward the model its turn was sent to. Environments that
+have not been updated report nothing here.
+
 ## Set custom model prices
 
 On web or desktop, open the environment dropdown on **Usage**, then choose **Model prices** to add,
