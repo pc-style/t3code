@@ -76,7 +76,8 @@ import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { UsageLimitsSection } from "./UsageLimits";
 import { UsagePriceOverrides } from "./UsagePriceOverrides";
 import { UsageProviderChart } from "./UsageProviderChart";
-import { sortModelsByTokens } from "./usageBreakdown";
+import { FrustrationRanking } from "./FrustrationRanking";
+import { selectFrustrationRanking, sortModelsByTokens } from "./usageBreakdown";
 import {
   METRIC_OPTIONS,
   WINDOW_OPTIONS,
@@ -179,6 +180,9 @@ export function UsagePage() {
         : merged.models,
     [breakdown, merged.models, metric],
   );
+  // Frustration counts arrive with the server transcript scan; until then the
+  // overlay filters everything out and renders nothing.
+  const frustrationRows = useMemo(() => selectFrustrationRanking(merged.models), [merged.models]);
   const activeProviders = useMemo(() => providersWithUsage(merged.providers), [merged.providers]);
   const summaryRows: Array<
     | { readonly kind: "usage"; readonly provider: UsageProviderKind }
@@ -754,6 +758,8 @@ export function UsagePage() {
                     </table>
                   )}
                 </section>
+
+                <FrustrationRanking rows={frustrationRows} />
               </>
             )}
           </WorkspacePageContainer>
