@@ -203,6 +203,10 @@
       "types": "./src/state/orchestration.ts",
       "default": "./src/state/orchestration.ts"
     },
+    "./state/thread-history-merge": {
+      "types": "./src/state/threadHistoryMerge.ts",
+      "default": "./src/state/threadHistoryMerge.ts"
+    },
     "./state/orchestration-v2-projection": {
       "types": "./src/state/orchestrationV2Projection.ts",
       "default": "./src/state/orchestrationV2Projection.ts"
@@ -354,6 +358,10 @@
     "./state/thread-undo": {
       "types": "./src/state/threadUndo.ts",
       "default": "./src/state/threadUndo.ts"
+    },
+    "./state/adhd-queue": {
+      "types": "./src/state/adhdQueue.ts",
+      "default": "./src/state/adhdQueue.ts"
     },
     "./state/thread-settled": {
       "types": "./src/state/threadSettled.ts",

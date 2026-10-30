@@ -72,6 +72,20 @@ export interface ThreadTitleGenerationResult {
   needsRefinement?: boolean | undefined;
 }
 
+export interface NextPromptsGenerationInput {
+  cwd: string;
+  title: string;
+  conversation: string;
+  failed: boolean;
+  /** The latest failed run's provider error, when it recorded one. */
+  failureMessage?: string;
+  modelSelection: ModelSelection;
+}
+
+export interface NextPromptsGenerationResult {
+  prompts: ReadonlyArray<string>;
+}
+
 export interface ReviewGuideStackLayer {
   readonly number: number;
   readonly title: string | null;
@@ -117,4 +131,8 @@ export interface ProviderTextGeneration {
   readonly generateReviewGuide: (
     input: ReviewGuideGenerationInput,
   ) => Effect.Effect<ReviewGuideGenerationResult, TextGenerationError>;
+
+  readonly generateNextPrompts: (
+    input: NextPromptsGenerationInput,
+  ) => Effect.Effect<NextPromptsGenerationResult, TextGenerationError>;
 }

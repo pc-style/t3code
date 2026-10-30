@@ -1,6 +1,6 @@
 import { useActiveNewTask } from "../../state/active-new-task";
 import { Toolbar } from "../../components/ui/Toolbar";
-import { useFocusEffect, useIsFocused } from "@react-navigation/native";
+import { useFocusEffect, useIsFocused, useNavigation } from "@react-navigation/native";
 import { use, useCallback, useEffect, useRef } from "react";
 import { Platform } from "react-native";
 import { isDuoDevice } from "../../lib/device-type";
@@ -13,10 +13,11 @@ import {
   NativePrimaryColumnContext,
   NativeWorkspaceTabActivityContext,
 } from "../../native/v5-workspace-context";
+import { useAdhdModeEnabled } from "../adhd/useAdhdModeEnabled";
 import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { useWorkspaceTabs } from "./WorkspaceTabsContext";
-import { useCompactWorkspaceTabs, useSidebarWorkspaceTabs } from "./useSystemWorkspaceTabBar";
+import { useFloatingWorkspaceTabs, useSidebarWorkspaceTabs } from "./useSystemWorkspaceTabBar";
 import { WorkspaceTabToolbarButtons } from "./WorkspaceSectionToolbar";
 
 const SEARCH_LABELS = {
@@ -33,7 +34,7 @@ export function WorkspaceToolbar(props: {
   const activeNewTask = useActiveNewTask();
   const deviceType = useDeviceType();
   const sidebarTabs = useSidebarWorkspaceTabs();
-  const compactTabs = useCompactWorkspaceTabs();
+  const floatingTabs = useFloatingWorkspaceTabs();
   const duoSearch = NATIVE_LIQUID_GLASS_SUPPORTED && isDuoDevice(deviceType);
   const bottomSearch = duoSearch && sidebarTabs !== "picker";
   // On the Duo, compose belongs to the threads tab, in the detail column's bar when unfolded.
@@ -43,9 +44,11 @@ export function WorkspaceToolbar(props: {
     !workspace.settingsOpen &&
     workspace.state.selectedTab === "threads" &&
     activeNewTask === null;
+  const navigation = useNavigation();
+  const adhdModeEnabled = useAdhdModeEnabled();
   const tabActive = use(NativeWorkspaceTabActivityContext)?.active ?? true;
   const focused = useIsFocused();
-  const { panes, togglePrimarySidebar } = useAdaptiveWorkspaceLayout();
+  const { layout, panes, togglePrimarySidebar } = useAdaptiveWorkspaceLayout();
   const searchRef = useRef<SearchBarCommands>(null);
   // The Settings list takes the selected tab's place, so search follows it.
   const selectedTab = workspace.settingsOpen ? "settings" : workspace.state.selectedTab;
@@ -184,14 +187,22 @@ export function WorkspaceToolbar(props: {
           header's own items, so an empty one would hide the Settings scope filter. */}
       {workspace.settingsOpen && !foldedSearch ? null : (
         <Toolbar placement="right">
+          {adhdModeEnabled && selectedTab === "threads" ? (
+            <Toolbar.Button
+              identifier="workspace-adhd-mode"
+              accessibilityLabel="ADHD mode"
+              icon="bell.badge"
+              onPress={() => navigation.navigate("AdhdMode")}
+            />
+          ) : null}
           {searchButton}
           {nativeToolbarCompose && foldedSearch ? <Toolbar.Spacer width={8} /> : null}
           {composeButton}
           {selectedTab !== "threads" ||
           isDuoDevice(deviceType) ||
-          deviceType === "pad" ||
+          (deviceType === "pad" && layout.usesSplitView) ||
           sidebarTabs === "picker" ||
-          compactTabs ? null : (
+          floatingTabs ? null : (
             <Toolbar.Button
               accessibilityLabel="New chat"
               icon="square.and.pencil"

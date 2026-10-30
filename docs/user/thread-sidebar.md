@@ -155,6 +155,20 @@ right-click it, to start a thread in that project. Pinned threads stay above the
 Snoozed and Settled stay below them. In this mode you cannot drag threads, and the Working section
 is off. Each device keeps its own choice.
 
+### Answer agents one at a time (beta)
+
+Turn on **Settings → Labs → ADHD mode** on web and desktop, then open it from the command palette
+or with `Mod+Alt+J`. It shows one card per thread that needs you: agents waiting on an approval or
+a question first, then failed and finished threads in your project order. Working threads stay
+out of it. On a finished or failed card, your text generation model suggests the next prompt.
+Press `↑` and `↓` to pick an option, `E` to accept it, and `R` to write your own answer (it
+starts from the suggestion). `Backspace` snoozes the thread for 15 minutes, `Esc` settles it,
+`1` to `9` jump to a card, and `O` opens the thread. A thread can't be snoozed while its agent
+is waiting on you.
+
+On mobile, turn on **Settings → Labs → ADHD mode** and tap the bell in the thread list toolbar.
+Tap an option to answer, or use the buttons to snooze, settle, or open the thread.
+
 ## Settle finished work
 
 Choose **Settle thread** from its menu to move finished work out of the active list

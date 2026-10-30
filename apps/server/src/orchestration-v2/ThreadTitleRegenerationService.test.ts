@@ -9,6 +9,7 @@ import {
   ProviderThreadId,
   RunId,
   ThreadId,
+  TurnItemId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -24,6 +25,7 @@ import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
+import * as NextPromptSuggestion from "./NextPromptSuggestionService.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 import * as ThreadTitleRegeneration from "./ThreadTitleRegenerationService.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
@@ -46,6 +48,7 @@ const adapter = {
 function makeHarness(
   options: {
     readonly generateTitle?: TextGeneration.TextGeneration["Service"]["generateThreadTitle"];
+    readonly generateNextPrompts?: TextGeneration.TextGeneration["Service"]["generateNextPrompts"];
   } = {},
 ) {
   const layerDatabase = SqlitePersistence.layerMemory;
@@ -86,25 +89,32 @@ function makeHarness(
           : Option.none(),
       ),
   });
+  const generateNextPrompts = vi.fn(
+    options.generateNextPrompts ?? (() => Effect.succeed({ prompts: ["Open a PR"] })),
+  );
+  const layerTextGenerationDependencies = Layer.mergeAll(
+    layerThreadManagement,
+    layerProjectedProjects,
+    Layer.mock(TextGeneration.TextGeneration)({ generateThreadTitle, generateNextPrompts }),
+    layerServerSettings,
+  );
   const layerTitleRegeneration = ThreadTitleRegeneration.layer.pipe(
-    Layer.provide(
-      Layer.mergeAll(
-        layerThreadManagement,
-        layerProjectedProjects,
-        Layer.mock(TextGeneration.TextGeneration)({ generateThreadTitle }),
-        layerServerSettings,
-      ),
-    ),
+    Layer.provide(layerTextGenerationDependencies),
+  );
+  const layerNextPromptSuggestion = NextPromptSuggestion.layer.pipe(
+    Layer.provide(layerTextGenerationDependencies),
   );
   return {
     layer: Layer.mergeAll(
       layerOrchestrator,
       layerThreadManagement,
       layerTitleRegeneration,
+      layerNextPromptSuggestion,
       layerOutbox,
       layerDatabase,
     ),
     generateThreadTitle,
+    generateNextPrompts,
   };
 }
 
@@ -159,7 +169,7 @@ function recordRun(input: {
   readonly ordinal: number;
   readonly user: string;
   readonly assistant: string;
-  readonly status?: "completed" | "rolled_back";
+  readonly status?: "completed" | "failed" | "rolled_back";
 }) {
   return Effect.gen(function* () {
     const eventSink = yield* EventSink.EventSinkV2;
@@ -477,6 +487,97 @@ describe("ThreadTitleRegenerationService", () => {
         const projection = yield* threads.getThreadProjection(threadId);
         assert.equal(projection.thread.title, "Seed title");
         assert.isNotOk(projection.thread.titleRegeneration);
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+});
+
+describe("NextPromptSuggestionService", () => {
+  it.effect("asks for next prompts from retained work and passes the latest failure", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness();
+      yield* Effect.gen(function* () {
+        const suggestions = yield* NextPromptSuggestion.NextPromptSuggestionService;
+        const threadId = yield* createThread({
+          command: "command:next-prompts:create",
+          thread: "thread:next-prompts",
+        });
+        const empty = yield* suggestions.suggest({ threadId });
+        assert.deepEqual(empty.prompts, []);
+        assert.equal(harness.generateNextPrompts.mock.calls.length, 0);
+
+        yield* recordRun({
+          threadId,
+          runId: RunId.make("run:next-prompts:1"),
+          ordinal: 1,
+          user: "Fix the login test",
+          assistant: "Fixed it.",
+        });
+        yield* recordRun({
+          threadId,
+          runId: RunId.make("run:next-prompts:2"),
+          ordinal: 2,
+          user: "Now migrate the users table",
+          assistant: "The migration broke 3 tests.",
+          status: "failed",
+        });
+        const eventSink = yield* EventSink.EventSinkV2;
+        const now = yield* DateTime.now;
+        yield* eventSink.write({
+          events: [
+            {
+              id: EventId.make("run:next-prompts:2:error"),
+              type: "turn-item.updated",
+              threadId,
+              runId: RunId.make("run:next-prompts:2"),
+              driver: adapter.driver,
+              providerInstanceId: modelSelection.instanceId,
+              occurredAt: now,
+              payload: {
+                id: TurnItemId.make("run:next-prompts:2:error"),
+                threadId,
+                runId: RunId.make("run:next-prompts:2"),
+                nodeId: null,
+                providerThreadId: null,
+                providerTurnId: null,
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: 1,
+                status: "failed",
+                title: null,
+                startedAt: now,
+                completedAt: now,
+                updatedAt: now,
+                type: "error",
+                failure: {
+                  class: "provider_error",
+                  message: "relation users_v2 already exists",
+                  code: null,
+                  retryable: false,
+                },
+              },
+            },
+          ],
+        });
+        yield* recordRun({
+          threadId,
+          runId: RunId.make("run:next-prompts:3"),
+          ordinal: 3,
+          user: "Drop the users table",
+          assistant: "Dropped the users table.",
+          status: "rolled_back",
+        });
+        const result = yield* suggestions.suggest({ threadId });
+
+        assert.deepEqual(result.prompts, ["Open a PR"]);
+        const call = harness.generateNextPrompts.mock.calls[0]?.[0];
+        assert.equal(call?.failed, true);
+        assert.equal(call?.cwd, "/repo");
+        assert.equal(call?.title, "Seed title");
+        assert.equal(call?.failureMessage, "relation users_v2 already exists");
+        assert.include(call?.conversation, "ASSISTANT:\nThe migration broke 3 tests.");
+        assert.notInclude(call?.conversation, "Drop the users table");
+        assert.notInclude(call?.conversation, "Dropped the users table.");
       }).pipe(Effect.provide(harness.layer));
     }),
   );
