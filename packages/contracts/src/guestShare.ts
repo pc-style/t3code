@@ -16,7 +16,6 @@ import {
  * credentials are derived from the share id with a server key and never stored.
  */
 export const GUEST_SHARE_TTL_MS = 24 * 60 * 60 * 1000;
-export const GUEST_MESSAGE_MAX_LENGTH = 4_000;
 export const GUEST_NAME_MAX_LENGTH = 40;
 export const GUEST_PENDING_MESSAGE_LIMIT = 3;
 /** Resolved messages kept so the guest can see what happened to what they sent. */
@@ -112,7 +111,7 @@ export const GuestSubmitRequest = Schema.Struct({
   /** The share the page shows, so a message from a page for a replaced link is refused instead
       of reaching the new one. */
   shareId: GuestShareId,
-  text: TrimmedString.check(Schema.isMaxLength(GUEST_MESSAGE_MAX_LENGTH)),
+  text: TrimmedString,
 });
 export type GuestSubmitRequest = typeof GuestSubmitRequest.Type;
 

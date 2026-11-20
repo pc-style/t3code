@@ -10,7 +10,7 @@ import {
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
-import { GUEST_MESSAGE_MAX_LENGTH, GUEST_NAME_MAX_LENGTH } from "./guestShare.ts";
+import { GUEST_NAME_MAX_LENGTH } from "./guestShare.ts";
 
 /** Image and file records reference `ChatAttachment` ids, never bytes. */
 
@@ -274,7 +274,7 @@ const COMPOSER_CONTEXT_MAX_SERIALIZED_CHARS = 16_000_000;
 export const GuestMessageAttribution = Schema.Struct({
   guestMessageId: GuestMessageId,
   name: TrimmedNonEmptyString.check(Schema.isMaxLength(GUEST_NAME_MAX_LENGTH)),
-  text: Schema.String.check(Schema.isMaxLength(GUEST_MESSAGE_MAX_LENGTH)),
+  text: Schema.String,
   /** The link the guest used. Only that link's guest may load the message's files. */
   shareId: Schema.optional(GuestShareId),
 });

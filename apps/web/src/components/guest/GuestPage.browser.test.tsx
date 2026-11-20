@@ -247,6 +247,39 @@ describe("GuestPage", () => {
     expect(socket).not.toHaveBeenCalled();
     // The composer names the thread's model, as the owner's does, with nothing to pick.
     await expect.element(screen.getByLabelText("Model: GPT-5.4")).toBeVisible();
+    // Guest prompts have no character limit.
+    await expect
+      .element(screen.getByRole("textbox", { name: "Message" }))
+      .not.toHaveAttribute("maxlength");
+  });
+
+  it("sends a prompt longer than 4,000 characters without truncating it", async () => {
+    using _page = visit(`/guest?share=${SHARE_ID}`);
+    using fetchSpy = vi
+      .spyOn(window, "fetch")
+      .mockImplementation(async () => new Response(null, { status: 204 }));
+    using _stream = vi
+      .spyOn(window, "EventSource")
+      .mockImplementation(fakeEventSource(opening([run("run-1", 1, "completed")], items)) as never);
+    await using screen = await render(<GuestPage />);
+
+    const longPrompt = "a".repeat(6_000);
+    const textbox = screen.getByRole("textbox", { name: "Message" });
+    await expect.element(textbox).toBeVisible();
+    await userEvent.fill(textbox, longPrompt);
+    await expect.element(textbox).toHaveValue(longPrompt);
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+    await vi.waitFor(() =>
+      expect(fetchSpy).toHaveBeenCalledWith(
+        `/api/guest/messages?share=${SHARE_ID}`,
+        expect.objectContaining({ method: "POST" }),
+      ),
+    );
+    const body = fetchSpy.mock.calls.find(
+      ([url]) => url === `/api/guest/messages?share=${SHARE_ID}`,
+    )?.[1]?.body;
+    expect(body).toBeInstanceOf(FormData);
+    expect((body as FormData).get("text")).toBe(longPrompt);
   });
 
   it("sends attached files with the message, as form data", async () => {
