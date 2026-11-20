@@ -1,6 +1,5 @@
 import {
   EnvironmentId,
-  GUEST_MESSAGE_MAX_LENGTH,
   GUEST_HISTORY_ROUTE,
   GUEST_NAME_MAX_LENGTH,
   GUEST_ROUTE_PREFIX,
@@ -761,7 +760,6 @@ function GuestComposer({
         aria-label="Message"
         placeholder="Message"
         rows={2}
-        maxLength={GUEST_MESSAGE_MAX_LENGTH}
         value={text}
         onChange={(event) => setText(event.target.value)}
         onKeyDown={onKeyDown}

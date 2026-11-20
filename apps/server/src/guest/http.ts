@@ -4,11 +4,11 @@ import {
   GUEST_HISTORY_ROUTE,
   GUEST_ITEM_ROUTE,
   GUEST_MEDIA_ROUTE,
+  GUEST_MESSAGE_MAX_ATTACHMENT_BYTES,
+  GUEST_MESSAGE_MAX_ATTACHMENTS,
   GUEST_RENDER_ROUTE,
   GUEST_ROUTE_PREFIX,
   GUEST_SHARE_PARAM,
-  GUEST_MESSAGE_MAX_ATTACHMENT_BYTES,
-  GUEST_MESSAGE_MAX_ATTACHMENTS,
   GUEST_SHARE_TTL_MS,
   GuestRedeemRequest,
   GuestStreamEvent,
@@ -22,6 +22,7 @@ import {
 import * as ByteSize from "effect/ByteSize";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -124,16 +125,19 @@ const eventStreamResponse = <A>(
   );
 };
 
-// Guest JSON bodies are a name or one message; anyone who can reach the tunnel can post them.
-const JSON_MAX_BODY_BYTES = 64 * 1024;
-const readJson = Effect.gen(function* () {
+// Unauthenticated redeem bodies only carry a credential and short guest name.
+const REDEEM_JSON_MAX_BODY_BYTES = 64 * 1024;
+const readRedeemJson = Effect.gen(function* () {
   const request = yield* HttpServerRequest.HttpServerRequest;
   // A declared length over the cap is refused before reading; chunked bodies hit the reader cap.
-  if (Number(request.headers["content-length"] ?? "0") > JSON_MAX_BODY_BYTES) {
+  if (Number(request.headers["content-length"] ?? "0") > REDEEM_JSON_MAX_BODY_BYTES) {
     return yield* new GuestShareAccessError({ reason: "too_large" });
   }
   return yield* request.json.pipe(
-    Effect.provideService(HttpIncomingMessage.MaxBodySize, ByteSize.bytes(JSON_MAX_BODY_BYTES)),
+    Effect.provideService(
+      HttpIncomingMessage.MaxBodySize,
+      ByteSize.bytes(REDEEM_JSON_MAX_BODY_BYTES),
+    ),
   );
 });
 
@@ -141,7 +145,7 @@ const redeemRoute = HttpRouter.add(
   "POST",
   `${GUEST_ROUTE_PREFIX}/redeem`,
   Effect.gen(function* () {
-    const body = yield* readJson.pipe(Effect.flatMap(decodeRedeem), Effect.option);
+    const body = yield* readRedeemJson.pipe(Effect.flatMap(decodeRedeem), Effect.option);
     if (body._tag === "None") return yield* badRequest;
     const guestShares = yield* GuestShareService;
     return yield* guestShares.redeem(body.value).pipe(
@@ -161,12 +165,12 @@ const redeemRoute = HttpRouter.add(
   }),
 );
 
-// The parser stops a request with too many parts or bytes before it reaches the disk; the
-// service checks the exact limits and types.
+// The parser stops a request with too many parts before they reach disk, while the streaming
+// sink caps uploaded file bytes at `GUEST_MESSAGE_MAX_ATTACHMENT_BYTES` so prompt text has no
+// length cap and oversized file uploads still fail before filling disk.
 const UPLOAD_LIMITS = Multipart.limitsServices({
   maxParts: GUEST_MESSAGE_MAX_ATTACHMENTS + 4,
-  maxFileSize: GUEST_MESSAGE_MAX_ATTACHMENT_BYTES,
-  maxTotalSize: GUEST_MESSAGE_MAX_ATTACHMENT_BYTES + 64 * 1024,
+  maxFieldSize: Number.MAX_SAFE_INTEGER,
   // By default a JSON part is read as a field, which would drop a guest's `.json` file.
   fieldMimeTypes: [],
 });
@@ -175,10 +179,39 @@ const UPLOAD_LIMITS = Multipart.limitsServices({
 export const readSubmission = Effect.gen(function* () {
   const request = yield* HttpServerRequest.HttpServerRequest;
   if (!request.headers["content-type"]?.startsWith("multipart/form-data")) {
-    const body = yield* readJson.pipe(Effect.flatMap(decodeSubmit), Effect.option);
+    const body = yield* request.json.pipe(Effect.flatMap(decodeSubmit), Effect.option);
     return body._tag === "None" ? null : { fields: body.value, uploads: [] };
   }
-  const parts = yield* request.multipart.pipe(
+  const fs = yield* FileSystem.FileSystem;
+  let uploadedFileBytes = 0;
+  const parts = yield* Multipart.toPersisted(
+    request.multipartStream.pipe(
+      Stream.mapEffect((part) =>
+        part._tag === "File" && (part.key !== "file" || part.name === "")
+          ? Effect.fail(Multipart.MultipartError.fromReason("Parse", undefined))
+          : Effect.succeed(part),
+      ),
+    ),
+    (path, file) =>
+      Stream.run(
+        file.content.pipe(
+          Stream.mapEffect((chunk) => {
+            uploadedFileBytes += chunk.byteLength;
+            if (uploadedFileBytes > GUEST_MESSAGE_MAX_ATTACHMENT_BYTES) {
+              return Effect.fail(Multipart.MultipartError.fromReason("FileTooLarge", undefined));
+            }
+            return Effect.succeed(chunk);
+          }),
+        ),
+        fs.sink(path),
+      ).pipe(
+        Effect.mapError((error) =>
+          Multipart.isMultipartError(error)
+            ? error
+            : Multipart.MultipartError.fromReason("InternalError", error),
+        ),
+      ),
+  ).pipe(
     Effect.provideContext(UPLOAD_LIMITS),
     Effect.mapError(
       (error) =>
@@ -186,7 +219,7 @@ export const readSubmission = Effect.gen(function* () {
           reason:
             error.reason._tag === "TooManyParts"
               ? "too_many_files"
-              : error.reason._tag === "Parse"
+              : error.reason._tag === "Parse" || error.reason._tag === "InternalError"
                 ? "rejected"
                 : "too_large",
         }),
@@ -213,8 +246,8 @@ const submitRoute = HttpRouter.add(
   Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
     const guestShares = yield* GuestShareService;
-    // The session is checked before the body is read, so only a guest can make the server parse
-    // and store up to 10 MB.
+    // The session is checked before the body is read, so only an authenticated guest can make
+    // the server parse a submission and store up to 10 MB of attachments.
     const shareId = requestedShareId(request);
     const session = sessionFor(request, shareId);
     yield* guestShares.check(session);
